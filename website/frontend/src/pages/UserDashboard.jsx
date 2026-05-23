@@ -12,12 +12,10 @@ export default function UserDashboard() {
   const [house, setHouse] = useState(null);
   const [activeRoomId, setActiveRoomId] = useState(null);
 
-  // Default to first house once we know which ones the person has
   useEffect(() => {
     if (!activeHouseId && houseIds.length) setActiveHouseId(houseIds[0]);
   }, [houseIds, activeHouseId]);
 
-  // Subscribe to the selected house tree
   useEffect(() => {
     if (!activeHouseId) return;
     const r = ref(db, `houses/${activeHouseId}`);
@@ -46,7 +44,7 @@ export default function UserDashboard() {
 
   if (houseIds.length === 0) {
     return (
-      <main className="max-w-3xl mx-auto px-5 py-14">
+      <main className="max-w-3xl mx-auto px-4 sm:px-5 py-8 sm:py-14">
         <div className="card">
           <h2 className="text-lg font-semibold">No house assigned</h2>
           <p className="text-ink/60 text-sm mt-1">
@@ -58,12 +56,12 @@ export default function UserDashboard() {
   }
 
   return (
-    <main className="max-w-5xl mx-auto px-5 py-10">
+    <main className="max-w-5xl mx-auto px-4 sm:px-5 py-6 sm:py-10 pb-12">
       {houseIds.length > 1 && (
-        <div className="mb-5">
+        <div className="mb-4 sm:mb-5">
           <label className="label">House</label>
           <select
-            className="input max-w-xs"
+            className="input w-full sm:max-w-xs"
             value={activeHouseId || ''}
             onChange={(e) => { setActiveHouseId(e.target.value); setActiveRoomId(null); setHouse(null); }}
           >
@@ -74,16 +72,16 @@ export default function UserDashboard() {
         </div>
       )}
 
-      <section className="mb-7">
-        <h1 className="text-2xl font-bold tracking-tight">{house?.name || 'Loading…'}</h1>
-        {house?.location && <p className="text-ink/60 text-sm mt-1">{house.location}</p>}
+      <section className="mb-5 sm:mb-7">
+        <h1 className="text-xl sm:text-2xl font-bold tracking-tight">{house?.name || 'Loading…'}</h1>
+        {house?.location && <p className="text-ink/60 text-sm mt-1 break-words">{house.location}</p>}
       </section>
 
-      <section className="mb-5">
+      <section className="mb-4 sm:mb-5">
         <RoomTabs rooms={rooms} activeId={activeRoomId} onSelect={setActiveRoomId} />
       </section>
 
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
         {appliances.length === 0 ? (
           <div className="text-ink/50 text-sm">No appliances in this room yet.</div>
         ) : (

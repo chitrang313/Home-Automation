@@ -26,10 +26,10 @@ export default function Login() {
   };
 
   return (
-    <main className="max-w-md mx-auto px-5 py-14">
+    <main className="max-w-md mx-auto px-4 sm:px-5 py-8 sm:py-14">
       <div className="card">
-        <h1 className="text-2xl font-bold mb-1">Welcome back</h1>
-        <p className="text-ink/60 text-sm mb-6">Sign in to your dashboard.</p>
+        <h1 className="text-xl sm:text-2xl font-bold mb-1">Welcome back</h1>
+        <p className="text-ink/60 text-sm mb-5 sm:mb-6">Sign in to your dashboard.</p>
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div>
