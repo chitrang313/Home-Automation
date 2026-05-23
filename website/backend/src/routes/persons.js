@@ -26,30 +26,63 @@ const router = express.Router();
 /**
  * GET /api/persons/me
  *
- * Returns the current user's person profile. Includes a permanent admin
- * self-heal: if the user's email matches ADMIN_EMAIL but the custom claim
- * is missing (e.g. cleared by a token refresh, or first login), we re-grant
- * the claim AND set role='admin' in Firestore, then signal the client to
- * force-refresh its ID token.
+ * Returns the current user's person profile.
+ *
+ * Two self-heal behaviours run on every call:
+ *
+ * 1. Admin claim self-heal — if the caller's email matches ADMIN_EMAIL but
+ *    the Firebase custom claim is missing (first login, token was cleared,
+ *    etc.) we re-grant it and set tokenRefreshNeeded so the client pulls a
+ *    fresh token before hitting any admin route.
+ *
+ * 2. Person-doc auto-create — if no Firestore document exists yet (e.g.
+ *    first login after a migration from RTDB, or the account was created
+ *    directly in the Firebase Console) we bootstrap a complete doc from
+ *    the Firebase Auth user record so the frontend never sees a 404.
  */
 router.get('/me', verifyAuth, async (req, res, next) => {
   try {
     const adminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase();
-    const myEmail = (req.user.email || '').toLowerCase();
+    const myEmail   = (req.user.email || '').toLowerCase();
     const shouldBeAdmin = !!adminEmail && myEmail === adminEmail;
 
     let tokenRefreshNeeded = false;
 
-    // ─── Admin self-heal ────────────────────────────────────────────────
+    // ─── 1. Admin claim self-heal ──────────────────────────────────────
     if (shouldBeAdmin && !req.user.admin) {
       await admin.auth().setCustomUserClaims(req.user.uid, { admin: true });
-      await personRef(req.user.uid).set({ role: 'admin' }, { merge: true });
       tokenRefreshNeeded = true;
     }
 
-    const snap = await personRef(req.user.uid).get();
+    // ─── 2. Read (or auto-create) the Firestore person doc ────────────
+    const ref  = personRef(req.user.uid);
+    let   snap = await ref.get();
+
     if (!snap.exists) {
-      return res.status(404).json({ error: 'Person profile not found' });
+      // Fetch the canonical identity from Firebase Auth so we populate
+      // real display data even if the Firestore doc was never written
+      // (migration from RTDB, Console-created account, etc.).
+      const authUser = await admin.auth().getUser(req.user.uid);
+      const now      = Date.now();
+
+      const docData = {
+        name    : authUser.displayName || (authUser.email || '').split('@')[0],
+        email   : authUser.email       || '',
+        contact : authUser.phoneNumber || '',
+        role    : shouldBeAdmin ? 'admin' : 'user',
+        houseIds: {},
+        createdAt: now,
+      };
+
+      await ref.set(docData);
+      snap = await ref.get(); // re-read so serializeDoc has the full doc
+    } else if (shouldBeAdmin) {
+      // Doc exists — make sure the role field reflects admin status.
+      const data = snap.data() || {};
+      if (data.role !== 'admin') {
+        await ref.set({ role: 'admin' }, { merge: true });
+        snap = await ref.get();
+      }
     }
 
     res.json({
