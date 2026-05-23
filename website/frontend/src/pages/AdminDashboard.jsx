@@ -11,6 +11,11 @@ import {
   SWITCH_TYPES,
 } from '../constants/appliances.jsx';
 
+/** Total slot capacity across boards in a room (sums each board's relayCount). */
+function totalCapacity(boards) {
+  return (boards || []).reduce((n, b) => n + (b.relayCount || 4), 0);
+}
+
 /**
  * Admin Dashboard — three tabs:
  *
@@ -287,16 +292,35 @@ function PersonLinker({ houseId, unlinked, onChange }) {
   );
 }
 
-// ─── Room editor (with boards + appliance list) ─────────────────────────────
+// ─── Room editor (simplified — appliances first, hardware hidden by default) ──
+//
+// Design intent: admins almost always want to see "what's in this room" first
+// and tweak hardware second. So the layout is:
+//
+//   ┌─ Room header (rename / delete / + Appliance) ──────────────────────┐
+//   │  ⚠ Orphan banner (one-click auto-fix)                              │
+//   │  Appliance cards grid                                              │
+//   │  ▼ Advanced: boards & firmware  ← collapsed by default            │
+//   └────────────────────────────────────────────────────────────────────┘
+//
+// All hardware concepts (board cards, relay slots, firmware downloads,
+// "Relay board upgrade required" banner) live inside the Advanced panel.
 
 function RoomEditor({ houseId, room, onChange }) {
-  const [showAddAppliance, setShowAddAppliance] = useState(false);
+  const [showAddAppliance, setShowAddAppliance]   = useState(false);
+  const [editingAppliance, setEditingAppliance]   = useState(null);
+  const [fixingOrphans,   setFixingOrphans]       = useState(false);
 
   const totalCount = room.appliances.length;
-  const onlyBoard = room.boards.length === 1 ? room.boards[0] : null;
-  // Auto-upgrade scenario: 5 appliances arrived but the only board is still 4-ch.
-  const needsUpgradeWarning =
-    onlyBoard && totalCount >= 5 && onlyBoard.relayCount === 4;
+  const orphans    = useMemo(
+    () => room.appliances.filter((a) => !a.boardId || !a.relaySlot),
+    [room.appliances]
+  );
+  const capacity   = totalCapacity(room.boards);
+  // Auto-upgrade is detected by the backend (firmwareNeedsUpdate). But for the
+  // header summary we also flag the case where the room is over its current
+  // total slot capacity, since that always implies a hardware change.
+  const overCapacity = totalCount > capacity;
 
   const onRenameRoom = async () => {
     const name = prompt('Room name', room.name);
@@ -309,63 +333,174 @@ function RoomEditor({ houseId, room, onChange }) {
     await api.deleteRoom(houseId, room.id);
     onChange();
   };
-  const onAddBoard = async () => {
-    await api.addBoard(houseId, room.id, {});
-    onChange();
+  const onFixOrphans = async () => {
+    setFixingOrphans(true);
+    try {
+      const result = await api.autoAssignOrphans(houseId, room.id);
+      await onChange();
+      if (result.assigned?.length) {
+        // Tiny confirmation toast (alert is fine for an admin tool).
+        alert(`Assigned ${result.assigned.length} appliance(s) to free slots.`);
+      }
+    } catch (e) {
+      alert('Auto-assign failed: ' + e.message);
+    } finally {
+      setFixingOrphans(false);
+    }
   };
+
+  // For the edit modal — collect every used slot across the room's boards.
+  const occupiedSlots = useMemo(() => {
+    const m = {};
+    for (const a of room.appliances) {
+      if (!a.boardId || !a.relaySlot) continue;
+      (m[a.boardId] ||= new Set()).add(a.relaySlot);
+    }
+    return m;
+  }, [room.appliances]);
+
+  // Map boardId → deviceId so each ApplianceCard can subscribe to RTDB.
+  const deviceIdByBoardId = useMemo(() => {
+    const m = {};
+    for (const b of room.boards) m[b.id] = b.deviceId;
+    return m;
+  }, [room.boards]);
 
   return (
     <div className="rounded-xl border border-slate2 p-3 sm:p-4">
+      {/* ── Header ───────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <div className="font-medium">{room.name}</div>
+        <div className="min-w-0">
+          <div className="font-medium truncate">{room.name}</div>
+          <div className="text-[11px] text-ink/55 mt-0.5">
+            {totalCount} appliance{totalCount === 1 ? '' : 's'}
+            {' • '}
+            {room.boards.length} board{room.boards.length === 1 ? '' : 's'}
+            {capacity > 0 && (
+              <> {' • '} {totalCount}/{capacity} slots used </>
+            )}
+          </div>
+        </div>
         <div className="flex flex-wrap gap-3 text-xs">
           <button onClick={onRenameRoom} className="text-ink/60 hover:text-ink">Rename</button>
           <button onClick={onDeleteRoom} className="text-danger hover:underline">Delete room</button>
-          <button onClick={onAddBoard} className="text-accent hover:underline">+ Add board</button>
-          <button onClick={() => setShowAddAppliance(true)} className="text-accent hover:underline">+ Appliance</button>
+          <button onClick={() => setShowAddAppliance(true)} className="text-accent hover:underline font-medium">+ Appliance</button>
         </div>
       </div>
 
-      {needsUpgradeWarning && (
-        <div className="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs leading-relaxed">
-          ⚠ <strong>Relay board upgrade required.</strong> "{room.name}" now has {totalCount} appliances —
-          more than a 4-channel relay board supports. Replace the current relay board with an
-          8-channel one and re-flash the ESP32 using the updated firmware below. The ESP32
-          itself stays the same; only the relay board changes.
+      {/* ── Orphan recovery banner (only when orphans exist) ─────────── */}
+      {orphans.length > 0 && (
+        <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3 flex flex-wrap items-center gap-3">
+          <div className="flex-1 min-w-0 text-xs leading-relaxed">
+            <strong>{orphans.length} appliance{orphans.length === 1 ? '' : 's'} need a relay slot.</strong>{' '}
+            They probably came from a board you deleted earlier. Click below to put them on
+            the first free slot{room.boards.length === 0 ? ' (a new board will be created)' : ''}.
+          </div>
+          <button
+            type="button"
+            onClick={onFixOrphans}
+            disabled={fixingOrphans}
+            className="btn-primary text-xs py-1.5 px-3 shrink-0"
+          >
+            {fixingOrphans ? 'Fixing…' : 'Fix automatically'}
+          </button>
         </div>
       )}
 
-      {room.boards.length === 0 ? (
-        <div className="text-ink/50 text-xs mb-3">No board yet — add one to assign appliances.</div>
+      {/* ── Appliance grid ───────────────────────────────────────────── */}
+      {totalCount === 0 ? (
+        <div className="text-ink/50 text-sm py-6 text-center">
+          No appliances in this room yet. Click <span className="font-medium">“+ Appliance”</span> to add one — a board will be created automatically.
+        </div>
       ) : (
-        <div className="space-y-3">
-          {room.boards.map((b) => (
-            <BoardCard
-              key={b.id}
-              houseId={houseId}
-              roomId={room.id}
-              board={b}
-              appliances={room.appliances.filter((a) => a.boardId === b.id)}
-              onChange={onChange}
-              onDelete={onChange}
-            />
-          ))}
-        </div>
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+          {room.appliances.map((a) => {
+            const isOrphan = !a.boardId || !a.relaySlot;
+            return (
+              <div key={a.id} className={isOrphan ? 'ring-1 ring-amber-300/60 rounded-2xl' : ''}>
+                <ApplianceCard
+                  appliance={a}
+                  houseId={houseId}
+                  roomId={room.id}
+                  deviceId={deviceIdByBoardId[a.boardId]}
+                  subtitle={isOrphan ? '⚠ No relay slot — needs a board' : undefined}
+                  onEdit={() => setEditingAppliance(a)}
+                  onFavoriteChanged={onChange}
+                />
+              </div>
+            );
+          })}
+        </section>
       )}
 
-      {/* Orphan appliances (no board) */}
-      {room.appliances.some((a) => !a.boardId) && (
-        <div className="mt-3 text-xs text-ink/55">
-          {room.appliances.filter((a) => !a.boardId).length} unassigned appliance(s) — edit each to attach to a board.
-        </div>
-      )}
+      {/* ── Advanced: boards + firmware (collapsed by default) ───────── */}
+      <details className="mt-5 group">
+        <summary className="cursor-pointer select-none text-xs font-medium text-ink/65 hover:text-ink inline-flex items-center gap-1">
+          <span className="transition-transform group-open:rotate-90">▶</span>
+          Advanced: boards & firmware
+          {overCapacity && (
+            <span className="ml-1 text-amber-700">— ⚠ upgrade required</span>
+          )}
+        </summary>
+        <div className="mt-3 pl-4 border-l-2 border-slate2 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] text-ink/55 leading-relaxed pr-2">
+              Each ESP32 board controls up to 4 (or 8) relays. The slot
+              assignment, channel count, and firmware download are managed here.
+            </p>
+            <button
+              onClick={async () => { await api.addBoard(houseId, room.id, {}); onChange(); }}
+              className="text-xs text-accent hover:underline shrink-0"
+            >
+              + Add board
+            </button>
+          </div>
 
+          {overCapacity && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs leading-relaxed">
+              ⚠ <strong>Relay board upgrade required.</strong>{' '}
+              The room has {totalCount} appliances but only {capacity} relay slots across {room.boards.length} board{room.boards.length === 1 ? '' : 's'}.
+              Either add another board, or replace the existing 4-channel relay board with an 8-channel one and re-flash.
+            </div>
+          )}
+
+          {room.boards.length === 0 ? (
+            <div className="text-ink/50 text-xs">No board yet — adding an appliance creates one automatically.</div>
+          ) : (
+            room.boards.map((b) => (
+              <BoardCard
+                key={b.id}
+                houseId={houseId}
+                roomId={room.id}
+                board={b}
+                appliances={room.appliances.filter((a) => a.boardId === b.id)}
+                onChange={onChange}
+                onDelete={onChange}
+              />
+            ))
+          )}
+        </div>
+      </details>
+
+      {/* ── Modals ───────────────────────────────────────────────────── */}
       <AddApplianceInline
         open={showAddAppliance}
         onClose={() => setShowAddAppliance(false)}
         houseId={houseId}
         roomId={room.id}
         onAdded={() => { setShowAddAppliance(false); onChange(); }}
+      />
+      <EditApplianceModal
+        open={!!editingAppliance}
+        onClose={() => setEditingAppliance(null)}
+        appliance={editingAppliance}
+        boards={room.boards}
+        occupiedSlots={occupiedSlots}
+        isAdmin
+        onSave={async (patch) => {
+          await api.updateAppliance(houseId, room.id, editingAppliance.id, patch);
+          onChange();
+        }}
       />
     </div>
   );
