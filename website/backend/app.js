@@ -29,8 +29,11 @@ const allowedOrigins = [...new Set([...defaultOrigins, ...extraOrigins])];
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow same-origin (no Origin header) and any whitelisted origin
-      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      // Allow same-origin (no Origin header), whitelisted origins, and
+      // any vercel.app preview deploys (handy when iterating).
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      if (/\.vercel\.app$/.test(new URL(origin).hostname)) return callback(null, true);
       callback(new Error(`CORS: origin "${origin}" not allowed`));
     },
   })

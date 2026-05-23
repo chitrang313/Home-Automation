@@ -3,24 +3,27 @@ const path = require('path');
 const fs = require('fs');
 
 /**
- * Initialises Firebase Admin SDK in one of two modes:
+ * Initialises Firebase Admin SDK in one of three modes (tried in order):
  *
- *   1. Cloud Functions / GCP environment — uses default Application credentials
- *      (no service-account JSON needed). Detected via FUNCTION_TARGET / K_SERVICE env vars.
+ *   1. Cloud Functions / GCP — uses default Application credentials automatically.
+ *      Detected via FUNCTION_TARGET / K_SERVICE env vars.
  *
- *   2. Local development — reads service-account JSON from GOOGLE_APPLICATION_CREDENTIALS
- *      or ./firebase-service-account.json relative to the backend folder.
+ *   2. Generic host with FIREBASE_SERVICE_ACCOUNT_JSON env var (Vercel, Render,
+ *      Railway, Fly.io, etc.). The value must be the entire JSON contents.
+ *
+ *   3. Local development — reads ./firebase-service-account.json (or the path in
+ *      GOOGLE_APPLICATION_CREDENTIALS).
  */
 function initFirebase() {
   if (admin.apps.length) return admin;
 
+  // ── 1. Firebase Cloud Functions / GCP ────────────────────────────────────────
   const isCloudFunctions =
     process.env.FUNCTION_TARGET ||
     process.env.K_SERVICE ||
     process.env.FUNCTIONS_EMULATOR;
 
   if (isCloudFunctions) {
-    // GOOGLE_CLOUD_PROJECT is set automatically by Cloud Functions
     const projectId = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT;
     admin.initializeApp({
       databaseURL:
@@ -31,7 +34,26 @@ function initFirebase() {
     return admin;
   }
 
-  // Local development path
+  // ── 2. Service account from env var (Vercel / Render / Railway / Fly.io) ────
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    let serviceAccount;
+    try {
+      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    } catch (e) {
+      throw new Error(
+        'FIREBASE_SERVICE_ACCOUNT_JSON is set but not valid JSON. ' +
+          'Paste the full contents of the downloaded service-account JSON as the env value.'
+      );
+    }
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      databaseURL: process.env.DATABASE_URL,
+    });
+    console.log('Firebase Admin SDK initialized (env-based service account)');
+    return admin;
+  }
+
+  // ── 3. Local development — service account JSON file ────────────────────────
   const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS
     ? path.resolve(process.env.GOOGLE_APPLICATION_CREDENTIALS)
     : path.resolve(__dirname, '..', 'firebase-service-account.json');
@@ -39,7 +61,8 @@ function initFirebase() {
   if (!fs.existsSync(credPath)) {
     throw new Error(
       `Firebase service account JSON not found at ${credPath}. ` +
-        `Download it from Firebase Console → Project Settings → Service Accounts.`
+        `For deployment, set the FIREBASE_SERVICE_ACCOUNT_JSON env var with the file's contents. ` +
+        `For local dev, download the JSON from Firebase Console → Project Settings → Service Accounts.`
     );
   }
 
@@ -47,7 +70,7 @@ function initFirebase() {
     credential: admin.credential.cert(require(credPath)),
     databaseURL: process.env.DATABASE_URL,
   });
-  console.log('Firebase Admin SDK initialized (local)');
+  console.log('Firebase Admin SDK initialized (local JSON file)');
   return admin;
 }
 
