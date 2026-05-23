@@ -61,19 +61,45 @@ Every push to `main` triggers `.github/workflows/deploy.yml`, which:
    - `VITE_FIREBASE_APP_ID`
    - `VITE_API_URL` (the URL where your backend is deployed — see below)
 
-### Backend (manual, recommended: Render or Railway)
+### Backend (Firebase Cloud Functions)
 
-GitHub Pages cannot run Node.js, so the Express backend needs a separate host. Recommended free options:
+The Express backend deploys as a **Gen 2 HTTPS Cloud Function** in the same Firebase project — no separate hosting account, no service-account JSON to upload, no CORS surprises.
 
-- **Render** (https://render.com): Free web service, auto-deploys on git push, easy env-var management
-- **Railway** (https://railway.app): Free tier with 500 hours/month, very fast setup
-- **Fly.io** (https://fly.io): Free tier with 3 small VMs
+**One-time setup:**
 
-Whichever you pick, the backend needs:
-1. `website/backend/firebase-service-account.json` uploaded as a secret file
-2. Environment variables from `website/backend/.env.example`
-3. Public HTTPS URL (e.g. `https://home-automation-backend.onrender.com`)
-4. Update `VITE_API_URL` GitHub Secret to that URL, then re-run the deploy workflow
+```powershell
+# 1. Install Firebase CLI (once on your machine)
+npm install -g firebase-tools
+
+# 2. Login
+firebase login
+
+# 3. Verify the project is selected (already wired via .firebaserc)
+firebase use
+
+# 4. Set the ADMIN_EMAIL secret (you'll be prompted to paste the value)
+firebase functions:secrets:set ADMIN_EMAIL
+# enter: chitrang313@gmail.com
+```
+
+**Deploy:**
+
+```powershell
+cd D:\Web\HomeAutomationWebsite
+firebase deploy --only functions
+```
+
+After deploy completes, the URL appears in the CLI output:
+```
+Function URL (api(us-central1)): https://us-central1-home-automation-a86aa.cloudfunctions.net/api
+```
+
+**Connect frontend to it:**
+1. Copy that URL + `/api` suffix
+2. GitHub → Settings → Secrets → set `VITE_API_URL` to `https://us-central1-home-automation-a86aa.cloudfunctions.net/api`
+3. Re-run the `Deploy frontend to GitHub Pages` workflow → frontend now talks to the live backend
+
+**Note on Firebase plan:** Cloud Functions Gen 2 requires the **Blaze (pay-as-you-go)** plan. The free tier is generous (2M invocations + 400K GB-seconds per month) — for a personal home-automation dashboard, expect $0/month. To upgrade, go to Firebase Console → ⚙️ Project Settings → Usage and billing → Modify plan.
 
 ### Firmware (manual flash via Arduino IDE)
 
