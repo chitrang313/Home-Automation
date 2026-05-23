@@ -82,6 +82,15 @@ export const api = {
   updateRoom:  (hid, rid, body)      => request(`/houses/${hid}/rooms/${rid}`, { method: 'PATCH', body }),
   deleteRoom:  (hid, rid)            => request(`/houses/${hid}/rooms/${rid}`, { method: 'DELETE' }),
 
+  /**
+   * Re-assigns every appliance in a room that has no board / no slot
+   * (typically left behind by a board deletion) to free slots, creating
+   * a new board if every existing one is full. Returns:
+   *   { assigned: [{ id, boardId, relaySlot }], remaining: 0 }
+   */
+  autoAssignOrphans: (hid, rid) =>
+    request(`/houses/${hid}/rooms/${rid}/auto-assign-orphans`, { method: 'POST' }),
+
   // ─── Boards (one per ESP32) ───────────────────────────────────────────
   listBoards:  (hid, rid)            => request(`/houses/${hid}/rooms/${rid}/boards`),
   addBoard:    (hid, rid, body = {}) => request(`/houses/${hid}/rooms/${rid}/boards`, { method: 'POST', body }),

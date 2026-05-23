@@ -54,6 +54,19 @@ function relayCountFor(applianceCount) {
 }
 
 /**
+ * Returns the slot whitelist for a board, respecting its actual relayCount.
+ * Defaults to 4-channel if relayCount is missing or unrecognised.
+ *
+ * This is critical for auto-pick: assigning relay5..relay8 to a board that's
+ * still 4-channel would create an "invisible" appliance — it would persist
+ * in Firestore but its slot wouldn't exist on the live ESP32 until the
+ * admin physically swaps to an 8-channel relay board and re-flashes.
+ */
+function slotsForBoard(board) {
+  return (board?.relayCount || 4) >= 8 ? RELAY_SLOTS_8 : RELAY_SLOTS_4;
+}
+
+/**
  * Reconcile board.relayCount + firmwareNeedsUpdate after appliance changes.
  *
  * Call this whenever a board's appliance set changes (add / remove / move /
@@ -530,6 +543,126 @@ router.delete(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
+//   ORPHAN RECOVERY
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/houses/:houseId/rooms/:roomId/auto-assign-orphans
+ *
+ * Sweeps the room for any appliance with no board / no slot — typically
+ * created when an admin deletes a board (the backend nullifies boardId
+ * and relaySlot on every appliance that was on it). Re-distributes each
+ * orphan into the first free slot on an existing board, respecting each
+ * board's relayCount. If every existing board is full, spins up a new
+ * board (4-channel by default) and continues filling.
+ *
+ * Returns: { assigned: [{ id, boardId, relaySlot }], remaining: number }
+ *
+ * This endpoint is idempotent — calling it twice with no orphans is a
+ * no-op that returns { assigned: [], remaining: 0 }.
+ */
+router.post(
+  '/:houseId/rooms/:roomId/auto-assign-orphans',
+  verifyAuth,
+  requireAdmin,
+  async (req, res, next) => {
+    try {
+      const { houseId, roomId } = req.params;
+      if (!(await canAccessHouse(req, houseId))) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+
+      const appliancesSnap = await roomRef(houseId, roomId).collection('appliances').get();
+      const boardsSnap = await roomRef(houseId, roomId).collection('boards').get();
+
+      // boardId -> Set<relaySlot> currently in use
+      const occupied = {};
+      // boardId -> board data (relayCount, etc.) for the slot whitelist
+      const boards = {};
+      boardsSnap.forEach((b) => { boards[b.id] = b.data(); });
+      appliancesSnap.forEach((d) => {
+        const a = d.data();
+        if (!a.boardId || !a.relaySlot) return;
+        (occupied[a.boardId] ||= new Set()).add(a.relaySlot);
+      });
+
+      // List of orphans (no board OR no slot) — preserve creation order so
+      // older orphans get assigned first, matching the user's intuition.
+      const orphans = appliancesSnap.docs
+        .filter((d) => {
+          const a = d.data();
+          return !a.boardId || !a.relaySlot;
+        })
+        .sort((a, b) => (a.data().createdAt || 0) - (b.data().createdAt || 0));
+
+      if (orphans.length === 0) {
+        return res.json({ assigned: [], remaining: 0 });
+      }
+
+      const assigned = [];
+      const touchedBoardIds = new Set();
+
+      for (const orphanDoc of orphans) {
+        // 1. Try to fit into an existing board (respecting its relayCount).
+        let placedBoardId = null;
+        let placedSlot = null;
+
+        for (const bid of Object.keys(boards)) {
+          const used = occupied[bid] || new Set();
+          const slot = slotsForBoard(boards[bid]).find((s) => !used.has(s));
+          if (slot) {
+            placedBoardId = bid;
+            placedSlot = slot;
+            break;
+          }
+        }
+
+        // 2. No room anywhere → create a new 4-channel board.
+        if (!placedBoardId) {
+          const newBoard = roomRef(houseId, roomId).collection('boards').doc();
+          const deviceId = newBoard.id;
+          const autoLabel = `Board ${Object.keys(boards).length + 1}`;
+          const newBoardData = {
+            deviceId,
+            label: autoLabel,
+            relayCount: 4,
+            lastDownloadAt: null,
+            firmwareNeedsUpdate: false,
+            createdAt: Date.now(),
+          };
+          await newBoard.set(newBoardData);
+          await initBoardRtdbState(deviceId, 4);
+
+          boards[deviceId] = newBoardData;
+          placedBoardId = deviceId;
+          placedSlot = 'relay1';
+        }
+
+        // 3. Commit the assignment + update the occupancy map for the next iter.
+        await orphanDoc.ref.set(
+          { boardId: placedBoardId, relaySlot: placedSlot },
+          { merge: true }
+        );
+        (occupied[placedBoardId] ||= new Set()).add(placedSlot);
+        touchedBoardIds.add(placedBoardId);
+        assigned.push({ id: orphanDoc.id, boardId: placedBoardId, relaySlot: placedSlot });
+      }
+
+      // 4. Reconcile every board we wrote to (recomputes relayCount, flags firmware update).
+      await Promise.all(
+        Array.from(touchedBoardIds).map((bid) =>
+          reconcileBoard(houseId, roomId, bid, { forceFirmwareUpdate: true })
+        )
+      );
+
+      res.json({ assigned, remaining: 0 });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
 //   APPLIANCES
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -616,11 +749,14 @@ router.post(
         chosenBoardId = explicitBoardId;
         chosenSlot = explicitRelaySlot;
       } else {
-        // Auto-pick
+        // Auto-pick — respect each board's actual relayCount. Filling
+        // relay5+ on a 4-channel board would persist an appliance whose
+        // slot doesn't exist on the live hardware until the admin swaps
+        // the relay board for an 8-channel one and re-flashes firmware.
         for (const boardDoc of boardsSnap.docs) {
           const bid = boardDoc.id;
           const used = occupied[bid] || new Set();
-          const slot = RELAY_SLOTS_8.find((s) => !used.has(s));
+          const slot = slotsForBoard(boardDoc.data()).find((s) => !used.has(s));
           if (slot) {
             chosenBoardId = bid;
             chosenSlot = slot;
