@@ -37,10 +37,10 @@ export default function Signup() {
   };
 
   return (
-    <main className="max-w-xl mx-auto px-5 py-14">
+    <main className="max-w-xl mx-auto px-4 sm:px-5 py-8 sm:py-14">
       <div className="card">
-        <h1 className="text-2xl font-bold mb-1">Create your account</h1>
-        <p className="text-ink/60 text-sm mb-6">Register yourself and your first house.</p>
+        <h1 className="text-xl sm:text-2xl font-bold mb-1">Create your account</h1>
+        <p className="text-ink/60 text-sm mb-5 sm:mb-6">Register yourself and your first house.</p>
 
         <form onSubmit={onSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">

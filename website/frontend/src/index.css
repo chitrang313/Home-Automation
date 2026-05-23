@@ -3,21 +3,51 @@
 @tailwind utilities;
 
 html, body, #root { height: 100%; }
+
 body {
   @apply bg-paper text-ink font-sans antialiased;
+  /* Respect notches / home indicators on phones */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  -webkit-text-size-adjust: 100%; /* iOS: stop landscape font scaling */
 }
 
-/* Hide horizontal scrollbar on room tabs but keep scrolling */
+/* Hide scrollbar on horizontal tab lists but keep scrolling */
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-/* Reusable button styles */
+/* Reusable component classes */
 @layer components {
-  .btn { @apply inline-flex items-center justify-center font-medium rounded-lg px-4 py-2 transition-colors duration-150; }
-  .btn-primary { @apply btn bg-ink text-paper hover:bg-ink/90 disabled:opacity-50; }
+  /* Buttons — minimum 44px tall for thumb-friendly touch targets */
+  .btn {
+    @apply inline-flex items-center justify-center font-medium rounded-lg
+           px-4 py-2.5 min-h-[44px] transition-colors duration-150
+           select-none active:scale-[0.98];
+  }
+  .btn-primary   { @apply btn bg-ink text-paper hover:bg-ink/90 disabled:opacity-50; }
   .btn-secondary { @apply btn bg-slate1 text-ink hover:bg-slate2 border border-slate3; }
-  .btn-danger { @apply btn bg-danger text-white hover:bg-danger/90; }
-  .input { @apply w-full px-3 py-2 rounded-lg bg-white border border-slate3 focus:outline-none focus:border-ink/40 focus:ring-2 focus:ring-ink/5 transition; }
+  .btn-danger    { @apply btn bg-danger text-white hover:bg-danger/90; }
+
+  /* Compact action button used inside lists / cards */
+  .btn-sm {
+    @apply inline-flex items-center justify-center font-medium rounded-md
+           px-3 py-1.5 min-h-[36px] text-xs transition-colors duration-150;
+  }
+
+  /* Inputs — 16px font size prevents iOS Safari zoom-on-focus */
+  .input {
+    @apply w-full px-3 py-2.5 rounded-lg bg-white border border-slate3
+           text-base text-ink placeholder:text-ink/40
+           focus:outline-none focus:border-ink/40 focus:ring-2 focus:ring-ink/5
+           transition;
+  }
   .label { @apply block text-sm font-medium text-ink/70 mb-1; }
-  .card { @apply bg-white rounded-xl border border-slate2 shadow-card p-5; }
+
+  /* Card — less padding on tightest screens, more on roomy ones */
+  .card {
+    @apply bg-white rounded-xl border border-slate2 shadow-card p-4 sm:p-5;
+  }
 }
+
+/* Cleaner tap highlights on Android */
+a, button { -webkit-tap-highlight-color: rgba(0, 0, 0, 0.05); }

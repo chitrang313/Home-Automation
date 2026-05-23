@@ -30,28 +30,32 @@ export default function ApplianceCard({ appliance }) {
 
   const isOn = state === true;
   return (
-    <div className="card flex items-center justify-between gap-4">
-      <div className="flex items-center gap-3">
+    <div className="card flex items-center justify-between gap-3 sm:gap-4">
+      <div className="flex items-center gap-3 min-w-0 flex-1">
         <ApplianceIcon kind={appliance.icon} on={isOn} />
-        <div>
-          <div className="font-medium">{appliance.name}</div>
-          <div className="text-xs text-ink/50 font-mono">{appliance.relayPath}</div>
+        <div className="min-w-0 flex-1">
+          <div className="font-medium truncate">{appliance.name}</div>
+          <div className="text-[10px] sm:text-xs text-ink/50 font-mono truncate">
+            {appliance.relayPath}
+          </div>
         </div>
       </div>
+      {/* Toggle — bigger on mobile (16x9 px) for thumb taps, classic 14x8 on desktop */}
       <button
         onClick={onToggle}
         disabled={busy || state === null}
         aria-pressed={isOn}
+        aria-label={`Toggle ${appliance.name}`}
         className={
-          'relative w-14 h-8 rounded-full transition-colors duration-150 ' +
+          'relative shrink-0 w-16 h-9 sm:w-14 sm:h-8 rounded-full transition-colors duration-150 ' +
           (isOn ? 'bg-success' : 'bg-slate3') +
-          ' disabled:opacity-50'
+          ' disabled:opacity-50 active:scale-[0.97]'
         }
       >
         <span
           className={
-            'absolute top-1 h-6 w-6 rounded-full bg-white shadow transition-all duration-150 ' +
-            (isOn ? 'left-7' : 'left-1')
+            'absolute top-1 h-7 w-7 sm:h-6 sm:w-6 rounded-full bg-white shadow transition-all duration-150 ' +
+            (isOn ? 'left-8 sm:left-7' : 'left-1')
           }
         />
       </button>

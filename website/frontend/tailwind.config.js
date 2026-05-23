@@ -2,6 +2,14 @@
 export default {
   content: ['./index.html', './src/**/*.{js,jsx}'],
   theme: {
+    screens: {
+      xs: '400px',     // tiniest phones (iPhone SE, etc.)
+      sm: '640px',
+      md: '768px',
+      lg: '1024px',
+      xl: '1280px',
+      '2xl': '1536px',
+    },
     extend: {
       colors: {
         paper:   '#fafaf7', // slightly-warm off-white background

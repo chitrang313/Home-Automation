@@ -4,11 +4,11 @@ import { api } from '../services/api';
 export default function AdminDashboard() {
   const [tab, setTab] = useState('houses');
   return (
-    <main className="max-w-6xl mx-auto px-5 py-10">
-      <h1 className="text-2xl font-bold tracking-tight mb-1">Admin Panel</h1>
-      <p className="text-ink/60 text-sm mb-6">Manage houses, persons, and their links.</p>
+    <main className="max-w-6xl mx-auto px-4 sm:px-5 py-6 sm:py-10 pb-12">
+      <h1 className="text-xl sm:text-2xl font-bold tracking-tight mb-1">Admin Panel</h1>
+      <p className="text-ink/60 text-sm mb-4 sm:mb-6">Manage houses, persons, and their links.</p>
 
-      <div className="inline-flex p-1 bg-slate1 rounded-lg mb-6">
+      <div className="inline-flex p-1 bg-slate1 rounded-lg mb-5 sm:mb-6">
         {[
           ['houses', 'Houses'],
           ['persons', 'Persons'],
@@ -17,10 +17,12 @@ export default function AdminDashboard() {
             key={k}
             onClick={() => setTab(k)}
             className={
-              'px-4 py-1.5 text-sm font-medium rounded-md transition ' +
+              'px-4 py-2 text-sm font-medium rounded-md transition min-h-[36px] ' +
               (tab === k ? 'bg-white shadow-sm' : 'text-ink/60 hover:text-ink')
             }
-          >{label}</button>
+          >
+            {label}
+          </button>
         ))}
       </div>
 
@@ -79,11 +81,16 @@ function HousesTab() {
   return (
     <div>
       {err && <div className="text-sm text-danger mb-4">{err}</div>}
-      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
-        <section className="card">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">Houses <span className="text-ink/50 font-normal">({houses.length})</span></h2>
-            <button onClick={onAddHouse} className="btn-secondary text-xs py-1 px-2">+ Add</button>
+      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 sm:gap-6">
+        {/* On mobile, when something is selected, hide the list so the editor takes the whole screen */}
+        <section className={'card ' + (house ? 'hidden lg:block' : '')}>
+          <div className="flex items-center justify-between mb-3 gap-2">
+            <h2 className="font-semibold">
+              Houses <span className="text-ink/50 font-normal">({houses.length})</span>
+            </h2>
+            <button onClick={onAddHouse} className="btn-sm bg-ink text-paper hover:bg-ink/90 shrink-0">
+              + Add
+            </button>
           </div>
           <ul className="divide-y divide-slate2">
             {houses.map((h) => {
@@ -98,12 +105,19 @@ function HousesTab() {
                     (isSel ? 'bg-slate1' : 'hover:bg-slate1/60')
                   }
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="font-medium truncate">{h.name}</div>
                     <div className="text-xs text-ink/60 truncate">{h.location || '—'}</div>
-                    <div className="text-xs text-ink/50">{personCount} contact{personCount === 1 ? '' : 's'}</div>
+                    <div className="text-xs text-ink/50">
+                      {personCount} contact{personCount === 1 ? '' : 's'}
+                    </div>
                   </div>
-                  <button onClick={(e) => { e.stopPropagation(); onDeleteHouse(h.id); }} className="text-xs text-danger hover:underline shrink-0">Delete</button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onDeleteHouse(h.id); }}
+                    className="text-xs text-danger hover:underline shrink-0 px-2 py-1"
+                  >
+                    Delete
+                  </button>
                 </li>
               );
             })}
@@ -111,11 +125,17 @@ function HousesTab() {
           </ul>
         </section>
 
-        <section>
+        <section className={house ? '' : 'hidden lg:block'}>
           {!house ? (
             <div className="card text-ink/50">Select a house to manage it.</div>
           ) : (
-            <HouseEditor house={house} persons={persons} refresh={refreshSelected} refreshHouses={load} />
+            <HouseEditor
+              house={house}
+              persons={persons}
+              refresh={refreshSelected}
+              refreshHouses={load}
+              onBack={() => setSelectedId(null)}
+            />
           )}
         </section>
       </div>
@@ -123,7 +143,7 @@ function HousesTab() {
   );
 }
 
-function HouseEditor({ house, persons, refresh, refreshHouses }) {
+function HouseEditor({ house, persons, refresh, refreshHouses, onBack }) {
   const [savingMeta, setSavingMeta] = useState(false);
   const [meta, setMeta] = useState({ name: house.name || '', location: house.location || '' });
   useEffect(() => setMeta({ name: house.name || '', location: house.location || '' }), [house.id]);
@@ -150,11 +170,21 @@ function HouseEditor({ house, persons, refresh, refreshHouses }) {
   const unlinkedPersons = persons.filter(p => !contactIds.includes(p.id));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
+      {/* Mobile-only back button */}
+      <button
+        onClick={onBack}
+        className="lg:hidden inline-flex items-center gap-1 text-sm text-ink/60 hover:text-ink"
+      >
+        <span>←</span> <span>Back to houses</span>
+      </button>
+
       <div className="card">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
           <h3 className="font-semibold">House details</h3>
-          <button onClick={onSaveMeta} disabled={savingMeta} className="btn-primary">{savingMeta ? 'Saving…' : 'Save'}</button>
+          <button onClick={onSaveMeta} disabled={savingMeta} className="btn-sm bg-ink text-paper hover:bg-ink/90 disabled:opacity-50">
+            {savingMeta ? 'Saving…' : 'Save'}
+          </button>
         </div>
         <div className="grid grid-cols-1 gap-3">
           <div>
@@ -175,10 +205,11 @@ function HouseEditor({ house, persons, refresh, refreshHouses }) {
         ) : (
           <ul className="divide-y divide-slate2 mb-3">
             {linkedPersons.map((p) => (
-              <li key={p.id} className="py-2 flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium">{p.name}</div>
-                  <div className="text-xs text-ink/60">{p.email} · {p.contact}</div>
+              <li key={p.id} className="py-2 flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate">{p.name}</div>
+                  <div className="text-xs text-ink/60 truncate">{p.email}</div>
+                  <div className="text-xs text-ink/60 truncate">{p.contact}</div>
                 </div>
                 <button
                   onClick={async () => {
@@ -186,8 +217,10 @@ function HouseEditor({ house, persons, refresh, refreshHouses }) {
                     await api.unlinkPersonFromHouse(house.id, p.id);
                     refresh();
                   }}
-                  className="text-xs text-danger hover:underline"
-                >Remove</button>
+                  className="text-xs text-danger hover:underline shrink-0 px-2 py-1"
+                >
+                  Remove
+                </button>
               </li>
             ))}
           </ul>
@@ -197,13 +230,15 @@ function HouseEditor({ house, persons, refresh, refreshHouses }) {
       </div>
 
       <div className="card">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-semibold">Rooms & Appliances</h3>
-          <button onClick={onAddRoom} className="btn-secondary">+ Add room</button>
+        <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+          <h3 className="font-semibold">Rooms &amp; Appliances</h3>
+          <button onClick={onAddRoom} className="btn-sm bg-slate1 text-ink hover:bg-slate2 border border-slate3 shrink-0">
+            + Add room
+          </button>
         </div>
         {rooms.length === 0
           ? <div className="text-ink/50 text-sm">No rooms yet.</div>
-          : <div className="space-y-4">
+          : <div className="space-y-3 sm:space-y-4">
               {rooms.map((room) => <RoomEditor key={room.id} houseId={house.id} room={room} refresh={refresh} />)}
             </div>}
       </div>
@@ -220,12 +255,12 @@ function AddPersonToHouse({ house, unlinked, refresh }) {
     refresh();
   };
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-col sm:flex-row gap-2">
       <select className="input flex-1" value={pid} onChange={(e)=>setPid(e.target.value)}>
         <option value="">— select a person to add —</option>
         {unlinked.map(p => <option key={p.id} value={p.id}>{p.name} ({p.email})</option>)}
       </select>
-      <button onClick={add} disabled={!pid} className="btn-primary">Add</button>
+      <button onClick={add} disabled={!pid} className="btn-primary sm:w-auto">Add</button>
     </div>
   );
 }
@@ -250,20 +285,18 @@ function RoomEditor({ houseId, room, refresh }) {
     const name = prompt('Appliance name (e.g. Ceiling Light)');
     if (!name) return;
     const icon = prompt('Icon (bulb / fan / tv / plug / ac)', 'bulb') || 'bulb';
-    // relayPath is auto-generated by the backend as /houses/{houseId}/relays/{applianceId}
-    // — guaranteed unique. Admin can edit later to map to /relay1..4 for physical hardware.
     await api.addAppliance(houseId, room.id, { name, icon });
     refresh();
   };
 
   return (
-    <div className="rounded-lg border border-slate2 p-4">
-      <div className="flex items-center justify-between mb-3">
+    <div className="rounded-lg border border-slate2 p-3 sm:p-4">
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
         <div className="font-medium">{room.name}</div>
-        <div className="flex gap-2 text-xs">
-          <button onClick={onRename} className="text-ink/60 hover:text-ink">Rename</button>
-          <button onClick={onDelete} className="text-danger hover:underline">Delete</button>
-          <button onClick={onAddAppliance} className="text-accent hover:underline">+ Appliance</button>
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+          <button onClick={onRename} className="text-ink/60 hover:text-ink py-1">Rename</button>
+          <button onClick={onDelete} className="text-danger hover:underline py-1">Delete</button>
+          <button onClick={onAddAppliance} className="text-accent hover:underline py-1">+ Appliance</button>
         </div>
       </div>
       {appliances.length === 0 ? (
@@ -272,9 +305,9 @@ function RoomEditor({ houseId, room, refresh }) {
         <ul className="divide-y divide-slate2">
           {appliances.map((a) => (
             <li key={a.id} className="py-2 flex items-center justify-between gap-3">
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium truncate">{a.name}</div>
-                <div className="text-xs text-ink/50 font-mono truncate">{a.icon} · {a.relayPath}</div>
+                <div className="text-[10px] sm:text-xs text-ink/50 font-mono truncate">{a.icon} · {a.relayPath}</div>
               </div>
               <div className="flex gap-2 text-xs shrink-0">
                 <button
@@ -286,7 +319,7 @@ function RoomEditor({ houseId, room, refresh }) {
                     await api.updateAppliance(houseId, room.id, a.id, { name, relayPath, icon });
                     refresh();
                   }}
-                  className="text-ink/60 hover:text-ink"
+                  className="text-ink/60 hover:text-ink py-1 px-2"
                 >Edit</button>
                 <button
                   onClick={async () => {
@@ -294,7 +327,7 @@ function RoomEditor({ houseId, room, refresh }) {
                     await api.deleteAppliance(houseId, room.id, a.id);
                     refresh();
                   }}
-                  className="text-danger hover:underline"
+                  className="text-danger hover:underline py-1 px-2"
                 >Delete</button>
               </div>
             </li>
@@ -328,8 +361,8 @@ function PersonsTab() {
   const onAddPerson = async () => {
     const name = prompt('Name');           if (!name) return;
     const email = prompt('Email');         if (!email) return;
-    const contact = prompt('Contact (with country code, e.g. +91…)'); if (!contact) return;
-    const password = prompt('Initial password (min 6 chars)');         if (!password) return;
+    const contact = prompt('Contact number'); if (!contact) return;
+    const password = prompt('Initial password (min 6 chars)'); if (!password) return;
     try {
       await api.createPerson({ name, email, contact, password });
       await load();
@@ -350,11 +383,15 @@ function PersonsTab() {
   return (
     <div>
       {err && <div className="text-sm text-danger mb-4">{err}</div>}
-      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
-        <section className="card">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">Persons <span className="text-ink/50 font-normal">({persons.length})</span></h2>
-            <button onClick={onAddPerson} className="btn-secondary text-xs py-1 px-2">+ Add</button>
+      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 sm:gap-6">
+        <section className={'card ' + (selected ? 'hidden lg:block' : '')}>
+          <div className="flex items-center justify-between mb-3 gap-2">
+            <h2 className="font-semibold">
+              Persons <span className="text-ink/50 font-normal">({persons.length})</span>
+            </h2>
+            <button onClick={onAddPerson} className="btn-sm bg-ink text-paper hover:bg-ink/90 shrink-0">
+              + Add
+            </button>
           </div>
           <ul className="divide-y divide-slate2">
             {persons.map((p) => {
@@ -369,17 +406,26 @@ function PersonsTab() {
                     (isSel ? 'bg-slate1' : 'hover:bg-slate1/60')
                   }
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="font-medium truncate">
                       {p.name}
                       {p.role === 'admin' && (
-                        <span className="ml-2 text-[10px] uppercase font-semibold tracking-wide bg-ink text-paper px-1.5 py-0.5 rounded">Admin</span>
+                        <span className="ml-2 text-[10px] uppercase font-semibold tracking-wide bg-ink text-paper px-1.5 py-0.5 rounded">
+                          Admin
+                        </span>
                       )}
                     </div>
                     <div className="text-xs text-ink/60 truncate">{p.email}</div>
-                    <div className="text-xs text-ink/50 truncate">{p.contact} · {houseCount} house{houseCount === 1 ? '' : 's'}</div>
+                    <div className="text-xs text-ink/50 truncate">
+                      {p.contact} · {houseCount} house{houseCount === 1 ? '' : 's'}
+                    </div>
                   </div>
-                  <button onClick={(e) => { e.stopPropagation(); onDeletePerson(p.id); }} className="text-xs text-danger hover:underline shrink-0">Delete</button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onDeletePerson(p.id); }}
+                    className="text-xs text-danger hover:underline shrink-0 px-2 py-1"
+                  >
+                    Delete
+                  </button>
                 </li>
               );
             })}
@@ -387,11 +433,16 @@ function PersonsTab() {
           </ul>
         </section>
 
-        <section>
+        <section className={selected ? '' : 'hidden lg:block'}>
           {!selected ? (
             <div className="card text-ink/50">Select a person to manage them.</div>
           ) : (
-            <PersonEditor person={selected} houses={houses} refresh={load} />
+            <PersonEditor
+              person={selected}
+              houses={houses}
+              refresh={load}
+              onBack={() => setSelectedId(null)}
+            />
           )}
         </section>
       </div>
@@ -399,7 +450,7 @@ function PersonsTab() {
   );
 }
 
-function PersonEditor({ person, houses, refresh }) {
+function PersonEditor({ person, houses, refresh, onBack }) {
   const [edit, setEdit] = useState({ name: person.name, email: person.email, contact: person.contact });
   useEffect(() => setEdit({ name: person.name, email: person.email, contact: person.contact }), [person.id]);
   const [saving, setSaving] = useState(false);
@@ -416,11 +467,20 @@ function PersonEditor({ person, houses, refresh }) {
   const unlinkedHouses = houses.filter(h => !linkedIds.includes(h.id));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
+      <button
+        onClick={onBack}
+        className="lg:hidden inline-flex items-center gap-1 text-sm text-ink/60 hover:text-ink"
+      >
+        <span>←</span> <span>Back to persons</span>
+      </button>
+
       <div className="card">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
           <h3 className="font-semibold">Person details</h3>
-          <button onClick={onSave} disabled={saving} className="btn-primary">{saving ? 'Saving…' : 'Save'}</button>
+          <button onClick={onSave} disabled={saving} className="btn-sm bg-ink text-paper hover:bg-ink/90 disabled:opacity-50">
+            {saving ? 'Saving…' : 'Save'}
+          </button>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
@@ -429,7 +489,7 @@ function PersonEditor({ person, houses, refresh }) {
           </div>
           <div>
             <label className="label">Contact</label>
-            <input className="input" value={edit.contact} onChange={(e)=>setEdit({...edit, contact:e.target.value})} />
+            <input className="input" type="tel" value={edit.contact} onChange={(e)=>setEdit({...edit, contact:e.target.value})} />
           </div>
           <div className="sm:col-span-2">
             <label className="label">Email</label>
@@ -445,10 +505,10 @@ function PersonEditor({ person, houses, refresh }) {
         ) : (
           <ul className="divide-y divide-slate2 mb-3">
             {linkedHouses.map((h) => (
-              <li key={h.id} className="py-2 flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium">{h.name}</div>
-                  <div className="text-xs text-ink/60">{h.location || '—'}</div>
+              <li key={h.id} className="py-2 flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate">{h.name}</div>
+                  <div className="text-xs text-ink/60 truncate">{h.location || '—'}</div>
                 </div>
                 <button
                   onClick={async () => {
@@ -456,8 +516,10 @@ function PersonEditor({ person, houses, refresh }) {
                     await api.unlinkPersonFromHouse(h.id, person.id);
                     refresh();
                   }}
-                  className="text-xs text-danger hover:underline"
-                >Unlink</button>
+                  className="text-xs text-danger hover:underline shrink-0 px-2 py-1"
+                >
+                  Unlink
+                </button>
               </li>
             ))}
           </ul>
@@ -477,12 +539,12 @@ function AddHouseToPerson({ person, unlinked, refresh }) {
     refresh();
   };
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-col sm:flex-row gap-2">
       <select className="input flex-1" value={hid} onChange={(e)=>setHid(e.target.value)}>
         <option value="">— link this person to a house —</option>
         {unlinked.map(h => <option key={h.id} value={h.id}>{h.name}{h.location ? ` (${h.location})` : ''}</option>)}
       </select>
-      <button onClick={add} disabled={!hid} className="btn-primary">Link</button>
+      <button onClick={add} disabled={!hid} className="btn-primary sm:w-auto">Link</button>
     </div>
   );
 }
