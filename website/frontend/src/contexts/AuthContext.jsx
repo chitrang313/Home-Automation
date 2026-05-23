@@ -14,9 +14,19 @@ export function AuthProvider({ children }) {
     const unsub = onAuthStateChanged(auth, async (u) => {
       setFirebaseUser(u);
       if (u) {
+        // Force-refresh once so we have the latest custom claims
         await u.getIdToken(true);
         try {
-          const me = await api.me();
+          let me = await api.me();
+
+          // Permanent-admin self-heal: backend may have just promoted us; if so
+          // it sets tokenRefreshNeeded so we pull a token with the fresh claim
+          // before any admin route is hit.
+          if (me.tokenRefreshNeeded) {
+            await u.getIdToken(true);
+            me = await api.me(); // re-fetch with fresh token
+          }
+
           setPerson(me);
         } catch (err) {
           console.error('Failed to load profile', err);
