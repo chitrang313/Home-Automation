@@ -3,12 +3,43 @@ const { admin } = require('../firebase-admin');
 const { verifyAuth, requireAdmin } = require('../middleware/auth');
 const router = express.Router();
 
-/** GET /api/persons/me — current logged-in person's profile */
+/**
+ * GET /api/persons/me — current logged-in person's profile.
+ *
+ * Permanent-admin self-heal:
+ *   If the logged-in email matches ADMIN_EMAIL but the user doesn't currently
+ *   have the admin custom claim, grant it (and mirror role="admin" in the DB).
+ *   Tells the client to refresh its ID token by returning `tokenRefreshNeeded`.
+ *   This way the admin role is restored on every login — even if it was wiped,
+ *   missing at signup time, or never set because ADMIN_EMAIL was added later.
+ */
 router.get('/me', verifyAuth, async (req, res, next) => {
   try {
+    const adminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase();
+    const myEmail = (req.user.email || '').toLowerCase();
+    const shouldBeAdmin = !!adminEmail && myEmail === adminEmail;
+
+    let tokenRefreshNeeded = false;
+
+    if (shouldBeAdmin && !req.user.admin) {
+      // Promote: set Firebase Auth custom claim and DB role
+      await admin.auth().setCustomUserClaims(req.user.uid, { admin: true });
+      await admin.database().ref(`persons/${req.user.uid}/role`).set('admin');
+      tokenRefreshNeeded = true;
+      console.log(`[admin self-heal] granted admin to ${myEmail}`);
+    }
+
     const snap = await admin.database().ref(`persons/${req.user.uid}`).get();
     if (!snap.exists()) return res.status(404).json({ error: 'Person profile not found' });
-    res.json({ id: req.user.uid, ...snap.val(), admin: req.user.admin });
+
+    // Report effective admin state (claim OR email-match) so the UI is correct
+    // immediately, even though the JWT itself only updates on next refresh.
+    res.json({
+      id: req.user.uid,
+      ...snap.val(),
+      admin: req.user.admin || shouldBeAdmin,
+      tokenRefreshNeeded,
+    });
   } catch (err) {
     next(err);
   }
