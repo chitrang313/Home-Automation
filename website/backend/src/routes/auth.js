@@ -1,21 +1,35 @@
+/**
+ * Auth routes — public (no token required).
+ *
+ * Self-signup creates:
+ *   - Firebase Auth user (email/password)
+ *   - Firestore persons/{uid} document
+ *   - Firestore houses/{houseId} document
+ *   - Bidirectional link (person.houseIds ⇄ house.contactPersons)
+ *
+ * Admin self-grant: if the signup email matches ADMIN_EMAIL, the admin custom
+ * claim is applied immediately so the user lands in the admin dashboard.
+ */
 const express = require('express');
 const { admin } = require('../firebase-admin');
+const { personRef, houseRef } = require('../utils/firestore-helpers');
+
 const router = express.Router();
 
 /**
  * POST /api/auth/signup
- * Self-signup: creates Firebase Auth user + /persons/{uid} + /houses/{houseId},
- * and links them (person.houseIds[houseId]=true, house.contactPersons[uid]=true).
- *
- * Body: { email, password, name, contact, house: { name, location } }
+ * Body: { email, password, name, contact, house: { name, location? } }
  */
 router.post('/signup', async (req, res, next) => {
   try {
     const { email, password, name, contact, house } = req.body || {};
     if (!email || !password || !name || !contact || !house?.name) {
-      return res.status(400).json({ error: 'email, password, name, contact, house.name all required' });
+      return res.status(400).json({
+        error: 'email, password, name, contact, house.name all required',
+      });
     }
 
+    // ─── Create the Firebase Auth user ────────────────────────────────────
     const userRecord = await admin.auth().createUser({
       email,
       password,
@@ -23,33 +37,36 @@ router.post('/signup', async (req, res, next) => {
       phoneNumber: contact.startsWith('+') ? contact : undefined,
     });
 
-    const isAdmin = email.toLowerCase() === (process.env.ADMIN_EMAIL || '').toLowerCase();
+    // ─── Auto-grant admin role to the configured ADMIN_EMAIL ──────────────
+    const isAdmin =
+      email.toLowerCase() === (process.env.ADMIN_EMAIL || '').toLowerCase();
     if (isAdmin) {
       await admin.auth().setCustomUserClaims(userRecord.uid, { admin: true });
     }
 
-    const db = admin.database();
-    const houseRef = db.ref('houses').push();
-    const houseId = houseRef.key;
-    const now = Date.now();
+    // ─── Atomic Firestore batch: person + house + bidirectional link ──────
+    const db = admin.firestore();
+    const batch = db.batch();
+    const newHouseRef = db.collection('houses').doc(); // auto-ID
+    const houseId = newHouseRef.id;
     const personId = userRecord.uid;
+    const now = Date.now();
 
-    const updates = {};
-    updates[`persons/${personId}`] = {
+    batch.set(personRef(personId), {
       name,
       email,
       contact,
       role: isAdmin ? 'admin' : 'user',
       houseIds: { [houseId]: true },
       createdAt: now,
-    };
-    updates[`houses/${houseId}`] = {
+    });
+    batch.set(newHouseRef, {
       name: house.name,
       location: house.location || '',
       contactPersons: { [personId]: true },
       createdAt: now,
-    };
-    await db.ref().update(updates);
+    });
+    await batch.commit();
 
     res.json({ personId, houseId, isAdmin });
   } catch (err) {
@@ -60,13 +77,14 @@ router.post('/signup', async (req, res, next) => {
   }
 });
 
-/** POST /api/auth/forgot-password — sends Firebase reset email */
+/** POST /api/auth/forgot-password — generates a reset link via Firebase Auth. */
 router.post('/forgot-password', async (req, res, next) => {
   try {
     const { email } = req.body || {};
     if (!email) return res.status(400).json({ error: 'email required' });
     const link = await admin.auth().generatePasswordResetLink(email);
-    res.json({ ok: true, resetLink: link }); // Note: in production, send via email
+    // NOTE: in production, email this link via SendGrid / SES instead of returning it.
+    res.json({ ok: true, resetLink: link });
   } catch (err) {
     next(err);
   }

@@ -1,0 +1,23 @@
+{
+  "rules": {
+    "//comment": "All structured data (persons, houses, rooms, boards, appliances) lives in Firestore — see firestore.rules. RTDB now holds ONLY live relay state.",
+
+    ".read": false,
+    ".write": false,
+
+    "devices": {
+      "$deviceId": {
+        "//comment": "Any authenticated user can read/write any device's relay state. ESP32s sign in as a dedicated device account; house members sign in normally. Fine-grained per-device ownership lives in Firestore (boards.deviceId) and is enforced by the backend before any RTDB write.",
+        "relays": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        }
+      }
+    },
+
+    "relay1": { ".read": "auth != null", ".write": "auth != null" },
+    "relay2": { ".read": "auth != null", ".write": "auth != null" },
+    "relay3": { ".read": "auth != null", ".write": "auth != null" },
+    "relay4": { ".read": "auth != null", ".write": "auth != null" }
+  }
+}
