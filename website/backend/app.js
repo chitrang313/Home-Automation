@@ -45,10 +45,19 @@ app.use(
 );
 app.use(express.json({ limit: '256kb' }));
 
-// ─── Public probe ──────────────────────────────────────────────────────────
-app.get('/api/health', (req, res) =>
-  res.json({ ok: true, ts: Date.now(), service: 'home-automation-backend' })
-);
+// ─── Public probes ─────────────────────────────────────────────────────────
+// Two endpoints so that hitting the bare host shows something useful, and so
+// Vercel never falls back to its auto-rendered HTML 404 page (which injects
+// `vercel.live/_next-live/feedback/feedback.js` under a `default-src 'none'`
+// CSP and produces a noisy — but harmless — console error).
+const probeBody = () => ({
+  ok: true,
+  ts: Date.now(),
+  service: 'home-automation-backend',
+});
+app.get('/',            (req, res) => res.json(probeBody()));
+app.get('/api',         (req, res) => res.json(probeBody()));
+app.get('/api/health',  (req, res) => res.json(probeBody()));
 
 // ─── Routes ────────────────────────────────────────────────────────────────
 app.use('/api/auth',    authRoutes);
@@ -56,6 +65,13 @@ app.use('/api/persons', personRoutes);
 app.use('/api/houses',  houseRoutes);
 // Firmware lives under /api/houses/* and uses mergeParams internally.
 app.use('/api/houses',  firmwareRoutes);
+
+// ─── 404 for unknown paths (must run AFTER all routes) ─────────────────────
+// Returns JSON instead of letting the request fall through to Vercel's HTML
+// 404, which is what was injecting the blocked feedback.js script.
+app.use((req, res) => {
+  res.status(404).json({ error: `Not found: ${req.method} ${req.path}` });
+});
 
 // ─── Centralised error handler ─────────────────────────────────────────────
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
