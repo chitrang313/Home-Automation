@@ -1,0 +1,16 @@
+# Arduino IDE build output
+*.bin
+*.hex
+*.elf
+*.map
+build/
+
+# Arduino IDE cache
+.cache/
+.vscode/
+*.tmp.*
+
+# Local secrets file pattern (in case you create one)
+secrets.h
+credentials.h
+arduino_secrets.h

@@ -11,8 +11,11 @@ import UserDashboard from './pages/UserDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 
 export default function App() {
+  // import.meta.env.BASE_URL is '/' in dev and '/Home-Automation/' in prod build
+  // (set by vite.config.js). React Router needs this to handle sub-path correctly.
+  const basename = import.meta.env.BASE_URL.replace(/\/$/, '') || '/';
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
       <AuthProvider>
         <Navbar />
         <Routes>
