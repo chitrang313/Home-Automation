@@ -84,4 +84,8 @@ app.use((err, req, res, next) => {
   res.status(status).json({ error: err.message || 'Internal server error' });
 });
 
-module.exports = { app };
+// Default-export the Express app so Vercel's @vercel/node builder can use this
+// file directly as the function entry. Keep the named `.app` property too so
+// existing destructuring callers (`const { app } = require('./app')`) keep working.
+module.exports = app;
+module.exports.app = app;
