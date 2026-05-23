@@ -114,8 +114,23 @@ router.get('/', verifyAuth, requireAdmin, async (req, res, next) => {
  * optionally linking to existing houses in a single atomic batch.
  *
  * Body: { email, password, name, contact, houseIds?: string[] }
+ *
+ * Like /auth/signup this is a two-stage write (Firebase Auth, then a
+ * Firestore batch). We keep them consistent in two ways:
+ *
+ *   1. Rollback on Firestore failure — if anything after createUser
+ *      throws, we delete the just-created Auth user so the same email
+ *      can be retried without becoming an orphan.
+ *
+ *   2. Adopt orphans — if createUser reports email-already-exists, we
+ *      check Firestore. If persons/{uid} is missing, this is an orphan
+ *      from a previously-failed creation; we update the password and
+ *      adopt it. If a real person doc already exists we return 409.
  */
 router.post('/', verifyAuth, requireAdmin, async (req, res, next) => {
+  let createdAuthUid = null;
+  let adopted = false;
+
   try {
     const { email, password, name, contact, houseIds = [] } = req.body || {};
     if (!email || !password || !name || !contact) {
@@ -124,18 +139,42 @@ router.post('/', verifyAuth, requireAdmin, async (req, res, next) => {
         .json({ error: 'email, password, name, contact required' });
     }
 
-    // Step 1 — create the Firebase Auth user.
-    // We do this first because if the email is already taken we want a clean
-    // 409 without partial Firestore writes.
-    const userRecord = await admin.auth().createUser({
-      email,
-      password,
-      displayName: name,
-      phoneNumber: contact.startsWith('+') ? contact : undefined,
-    });
+    // ─── 1. Create (or adopt orphan) the Firebase Auth user ──────────────
+    let userRecord;
+    try {
+      userRecord = await admin.auth().createUser({
+        email,
+        password,
+        displayName: name,
+        // Only pass phoneNumber when E.164-formatted; Firebase rejects
+        // anything else and would block creation.
+        phoneNumber: typeof contact === 'string' && contact.startsWith('+')
+          ? contact
+          : undefined,
+      });
+      createdAuthUid = userRecord.uid;
+    } catch (err) {
+      if (err.code !== 'auth/email-already-exists') throw err;
 
-    // Step 2 — atomic Firestore batch: write person + mirror into each
-    // house's contactPersons map so list/read stays O(1).
+      // Email exists in Firebase Auth. Real user vs. orphan?
+      const existing = await admin.auth().getUserByEmail(email);
+      const personSnap = await personRef(existing.uid).get();
+      if (personSnap.exists) {
+        return res.status(409).json({
+          error: 'Email already registered to another person.',
+        });
+      }
+
+      // Orphan — adopt it.
+      await admin.auth().updateUser(existing.uid, {
+        password,
+        displayName: name,
+      });
+      userRecord = await admin.auth().getUser(existing.uid);
+      adopted = true;
+    }
+
+    // ─── 2. Atomic Firestore batch: person + house links ─────────────────
     const db = admin.firestore();
     const batch = db.batch();
     const now = Date.now();
@@ -159,10 +198,34 @@ router.post('/', verifyAuth, requireAdmin, async (req, res, next) => {
     }
 
     await batch.commit();
-    res.json({ id: userRecord.uid, name, email, contact });
+    return res.json({ id: userRecord.uid, name, email, contact });
   } catch (err) {
-    if (err.code === 'auth/email-already-exists') {
-      return res.status(409).json({ error: 'Email already registered' });
+    // Roll back the Auth user we created this request — never an adopted one.
+    if (createdAuthUid && !adopted) {
+      try {
+        await admin.auth().deleteUser(createdAuthUid);
+      } catch (cleanupErr) {
+        console.warn(
+          '[persons:create] failed to roll back Auth user',
+          createdAuthUid,
+          cleanupErr?.message
+        );
+      }
+    }
+
+    if (err.code === 'auth/invalid-password') {
+      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    }
+    if (err.code === 'auth/invalid-email') {
+      return res.status(400).json({ error: 'Email is invalid.' });
+    }
+    if (err.code === 'auth/phone-number-already-exists') {
+      return res.status(409).json({ error: 'Phone number already in use.' });
+    }
+    if (err.code === 'auth/invalid-phone-number') {
+      return res.status(400).json({
+        error: 'Phone number must be in international E.164 format (e.g. +919876543210), or omit the leading "+".',
+      });
     }
     next(err);
   }
