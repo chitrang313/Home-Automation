@@ -9,6 +9,7 @@ import Signup from './pages/Signup';
 import ForgotPassword from './pages/ForgotPassword';
 import UserDashboard from './pages/UserDashboard';
 import AdminDashboard from './pages/AdminDashboard';
+import Profile from './pages/Profile';
 
 export default function App() {
   // import.meta.env.BASE_URL is '/' in dev and '/Home-Automation/' in prod build
@@ -28,6 +29,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <UserDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <Profile />
               </ProtectedRoute>
             }
           />

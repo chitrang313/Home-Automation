@@ -1,6 +1,57 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
 
+// ─── Shared search + sort UI ──────────────────────────────────────────────────
+function SearchSort({ search, onSearchChange, sortBy, onSortChange, placeholder }) {
+  return (
+    <div className="flex flex-col sm:flex-row gap-2 mb-3">
+      <div className="relative flex-1">
+        <input
+          type="search"
+          className="input pl-9"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder={placeholder}
+          aria-label="Search"
+        />
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink/40 pointer-events-none"
+        >
+          <circle cx="11" cy="11" r="7" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+      </div>
+      <select
+        className="input sm:w-48"
+        value={sortBy}
+        onChange={(e) => onSortChange(e.target.value)}
+        aria-label="Sort"
+      >
+        <option value="name-asc">Name (A → Z)</option>
+        <option value="name-desc">Name (Z → A)</option>
+        <option value="date-desc">Newest first</option>
+        <option value="date-asc">Oldest first</option>
+      </select>
+    </div>
+  );
+}
+
+/** Sort an array of {name, createdAt} objects by sortBy = "<field>-<dir>" */
+function sortList(arr, sortBy) {
+  const [field, dir] = sortBy.split('-');
+  const mul = dir === 'asc' ? 1 : -1;
+  return arr.sort((a, b) => {
+    if (field === 'name') {
+      return ((a.name || '').toLowerCase() < (b.name || '').toLowerCase() ? -1 : 1) * mul;
+    }
+    return ((a.createdAt || 0) - (b.createdAt || 0)) * mul;
+  });
+}
+
 export default function AdminDashboard() {
   const [tab, setTab] = useState('houses');
   return (
@@ -40,6 +91,8 @@ function HousesTab() {
   const [house, setHouse] = useState(null);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('name-asc');
 
   const load = async () => {
     setErr('');
@@ -76,6 +129,18 @@ function HousesTab() {
     load();
   };
 
+  // Filter + sort
+  const visibleHouses = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let list = q
+      ? houses.filter(h =>
+          (h.name || '').toLowerCase().includes(q) ||
+          (h.location || '').toLowerCase().includes(q)
+        )
+      : houses.slice();
+    return sortList(list, sortBy);
+  }, [houses, search, sortBy]);
+
   if (loading) return <Center>Loading…</Center>;
 
   return (
@@ -86,14 +151,26 @@ function HousesTab() {
         <section className={'card ' + (house ? 'hidden lg:block' : '')}>
           <div className="flex items-center justify-between mb-3 gap-2">
             <h2 className="font-semibold">
-              Houses <span className="text-ink/50 font-normal">({houses.length})</span>
+              Houses <span className="text-ink/50 font-normal">
+                ({visibleHouses.length}{visibleHouses.length !== houses.length ? `/${houses.length}` : ''})
+              </span>
             </h2>
             <button onClick={onAddHouse} className="btn-sm bg-ink text-paper hover:bg-ink/90 shrink-0">
               + Add
             </button>
           </div>
+
+          {/* Search + sort */}
+          <SearchSort
+            search={search}
+            onSearchChange={setSearch}
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+            placeholder="Search by name or location…"
+          />
+
           <ul className="divide-y divide-slate2">
-            {houses.map((h) => {
+            {visibleHouses.map((h) => {
               const personCount = Object.keys(h.contactPersons || {}).length;
               const isSel = h.id === selectedId;
               return (
@@ -121,7 +198,11 @@ function HousesTab() {
                 </li>
               );
             })}
-            {houses.length === 0 && <li className="text-ink/50 text-sm py-3">No houses yet.</li>}
+            {visibleHouses.length === 0 && (
+              <li className="text-ink/50 text-sm py-3">
+                {houses.length === 0 ? 'No houses yet.' : 'No houses match your search.'}
+              </li>
+            )}
           </ul>
         </section>
 
@@ -346,6 +427,8 @@ function PersonsTab() {
   const [selectedId, setSelectedId] = useState(null);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('name-asc');
 
   const load = async () => {
     setErr('');
@@ -378,6 +461,19 @@ function PersonsTab() {
 
   const selected = persons.find(p => p.id === selectedId);
 
+  // Filter by name / email / contact, then sort
+  const visiblePersons = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let list = q
+      ? persons.filter(p =>
+          (p.name || '').toLowerCase().includes(q) ||
+          (p.email || '').toLowerCase().includes(q) ||
+          (p.contact || '').toLowerCase().includes(q)
+        )
+      : persons.slice();
+    return sortList(list, sortBy);
+  }, [persons, search, sortBy]);
+
   if (loading) return <Center>Loading…</Center>;
 
   return (
@@ -387,14 +483,26 @@ function PersonsTab() {
         <section className={'card ' + (selected ? 'hidden lg:block' : '')}>
           <div className="flex items-center justify-between mb-3 gap-2">
             <h2 className="font-semibold">
-              Persons <span className="text-ink/50 font-normal">({persons.length})</span>
+              Persons <span className="text-ink/50 font-normal">
+                ({visiblePersons.length}{visiblePersons.length !== persons.length ? `/${persons.length}` : ''})
+              </span>
             </h2>
             <button onClick={onAddPerson} className="btn-sm bg-ink text-paper hover:bg-ink/90 shrink-0">
               + Add
             </button>
           </div>
+
+          {/* Search + sort */}
+          <SearchSort
+            search={search}
+            onSearchChange={setSearch}
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+            placeholder="Search by name, email or mobile…"
+          />
+
           <ul className="divide-y divide-slate2">
-            {persons.map((p) => {
+            {visiblePersons.map((p) => {
               const houseCount = Object.keys(p.houseIds || {}).length;
               const isSel = p.id === selectedId;
               return (
@@ -429,7 +537,11 @@ function PersonsTab() {
                 </li>
               );
             })}
-            {persons.length === 0 && <li className="text-ink/50 text-sm py-3">No persons yet.</li>}
+            {visiblePersons.length === 0 && (
+              <li className="text-ink/50 text-sm py-3">
+                {persons.length === 0 ? 'No persons yet.' : 'No persons match your search.'}
+              </li>
+            )}
           </ul>
         </section>
 

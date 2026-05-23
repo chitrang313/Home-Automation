@@ -85,9 +85,13 @@ export default function Navbar() {
                 >
                   Dashboard
                 </Link>
-                <span className="hidden md:inline text-ink/60 ml-2 truncate max-w-[160px]">
+                <Link
+                  to="/profile"
+                  className="hidden md:inline text-ink/60 hover:text-ink ml-2 truncate max-w-[160px]"
+                  title="View profile"
+                >
                   {person?.name || person?.email}
-                </span>
+                </Link>
                 <button
                   onClick={onLogout}
                   className="btn-sm bg-ink text-paper hover:bg-ink/90"
@@ -154,8 +158,12 @@ export default function Navbar() {
               </button>
             </div>
 
-            {/* Current user identity */}
-            <div className="px-4 py-3 border-b border-slate2 text-sm">
+            {/* Current user identity — tap to open Profile */}
+            <Link
+              to="/profile"
+              onClick={() => setMenuOpen(false)}
+              className="block px-4 py-3 border-b border-slate2 text-sm hover:bg-slate1 active:bg-slate2 transition-colors"
+            >
               <div className="font-medium text-ink truncate">{person?.name || 'User'}</div>
               <div className="text-ink/60 text-xs truncate">{person?.email}</div>
               {isAdmin && (
@@ -163,7 +171,7 @@ export default function Navbar() {
                   Admin
                 </span>
               )}
-            </div>
+            </Link>
 
             {/* Menu items */}
             <nav className="px-2 py-3 space-y-1 flex-1 overflow-y-auto">
@@ -185,6 +193,17 @@ export default function Navbar() {
                 <HomeIcon />
                 <span className="font-medium">Home</span>
               </Link>
+              <Link
+                to="/profile"
+                onClick={() => setMenuOpen(false)}
+                className="flex items-center gap-3 px-3 py-3 rounded-lg text-ink hover:bg-slate1 active:bg-slate2 transition-colors"
+              >
+                <UserIcon />
+                <span className="font-medium">Profile</span>
+              </Link>
+
+              <div className="my-2 border-t border-slate2" />
+
               <button
                 onClick={onLogout}
                 className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-danger hover:bg-danger/5 active:bg-danger/10 transition-colors"
@@ -234,6 +253,14 @@ function ShieldIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  );
+}
+function UserIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
     </svg>
   );
 }
