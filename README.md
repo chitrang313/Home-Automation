@@ -1,146 +1,362 @@
 # Home Automation
 
-End-to-end IoT home automation system: ESP32-based 4-channel relay controller with capacitive touch inputs + a multi-tenant web dashboard.
+End-to-end IoT home automation system: ESP32-based relay controller with capacitive touch
+inputs + a multi-tenant web dashboard backed by Firebase (Firestore + Realtime Database).
 
 **Live demo:** https://chitrang313.github.io/Home-Automation/
 
-> ⚠️ **Note:** The live URL serves only the static React frontend. Sign-up / login / admin features require the Node.js backend, which must be deployed separately (see [Deployment](#deployment) below).
+> ⚠️ **Note:** The live URL serves the static React frontend only. Sign-up / login / admin
+> features require the Node.js backend deployed separately — see [Deployment](#deployment).
+
+---
 
 ## Repository Structure
 
 ```
 Home-Automation/
-├── firmware/                          ← Arduino .ino sketches for ESP32
-│   ├── 4DeviceButtonControl/          Push-button + relay (toggle on release)
-│   ├── 4DeviceSwitchControl/          TTP223 capacitive touch + relay (interrupt-driven)
-│   ├── NeoPixel_Test/                 WS2812B test sketch
-│   └── WebUI_ESP32_Firebase_4Relay_V1/  Legacy single-page web UI (kept for reference)
+├── firmware/
+│   ├── 4DeviceSwitchControl/             TTP223 capacitive touch + relay — PRODUCTION ✅
+│   ├── 4DeviceButtonControl/             Push-button + relay (toggle on release)
+│   ├── NeoPixel_Test/                    WS2812B LED strip test sketch
+│   └── WebUI_ESP32_Firebase_4Relay_V1/   Legacy single-page web UI (reference only)
 │
-├── website/                           ← Multi-tenant dashboard
-│   ├── backend/                       Node.js + Express + Firebase Admin SDK
-│   └── frontend/                      React 18 + Vite + Tailwind + React Router v6
+├── website/
+│   ├── backend/                          Node.js + Express + Firebase Admin SDK
+│   └── frontend/                         React 18 + Vite + Tailwind CSS + React Router v6
 │
-└── .github/workflows/                 CI/CD (GitHub Pages deploy for frontend)
+└── .github/workflows/                    CI/CD — GitHub Pages deploy for frontend
 ```
+
+---
+
+## System Architecture
+
+### Two-Database Design (Firestore + RTDB)
+
+The system splits data across two Firebase databases with clearly separated responsibilities:
+
+```
+┌────────────────────────────────────┐   ┌─────────────────────────────────────────┐
+│           FIRESTORE                │   │        REALTIME DATABASE (RTDB)         │
+│   structured, queryable metadata   │   │   live relay state — booleans only      │
+├────────────────────────────────────┤   ├─────────────────────────────────────────┤
+│  persons, houses, rooms,           │   │  /devices/{deviceId}/relays/            │
+│  boards, appliances                │   │    relay1 : true / false                │
+│                                    │   │    relay2 : true / false  ...           │
+│  Written by : Node.js backend      │   │                                         │
+│  Read by    : React dashboard      │   │  Written by : Frontend (app toggle)     │
+│  ESP32      : never reads this     │   │               ESP32 (physical touch)    │
+│                                    │   │  Read by    : ESP32 → fires GPIO        │
+│                                    │   │               Frontend → live UI state  │
+└────────────────────────────────────┘   └─────────────────────────────────────────┘
+```
+
+**Why this split?**
+
+- Firestore gives rich queries, per-field security rules, and offline support for
+  structural data that rarely changes.
+- RTDB uses a persistent binary WebSocket (~30–80 ms latency) — ideal for
+  sub-100 ms relay toggles where only a boolean needs to move.
+- The ESP32 only ever watches a handful of booleans; it never needs to know house names,
+  room names, or appliance names.
+
+---
+
+## Firestore Schema
+
+```
+persons (collection)
+└── {uid} (document)
+      name        : "Alpesh"
+      contact     : "98765XXXXX"      ← stored; never exposed in public responses
+      role        : "user" | "admin"
+      createdAt   : timestamp
+      houseIds    : { houseId : true } ← reverse-index, fast membership check
+
+houses (collection)
+└── {houseId} (document)
+      name            : "Ami Kunj"
+      location        : "Surat"
+      createdAt       : timestamp
+      contactPersons  : { uid : true }
+
+    ── rooms (subcollection)
+    └── {roomId} (document)
+          name   : "Hall"
+          floor  : "Ground"
+
+        ── boards (subcollection)
+        └── {boardId} (document)
+              deviceId            : "-NxKjP2mAbc3"  ← links RTDB path + generated .ino
+              relayCount          : 4 | 8            ← auto-set from appliance count
+              lastDownloadAt      : timestamp | null
+              firmwareNeedsUpdate : true | false      ← set when relay config changes
+
+        ── appliances (subcollection)
+        └── {appId} (document)
+              name        : "Fan1"          ← display label; safe to rename anytime
+              icon        : "fan"           ← visual icon; safe to change anytime
+              type        : "fan"           ← functional category (fixed at creation)
+              boardId     : "{boardId}"
+              relaySlot   : "relay1".."relay8"
+              switchType  : "touch" | "click" | "none"
+```
+
+---
+
+## RTDB Schema
+
+```
+devices
+└── {deviceId}
+      relays
+        relay1 : false
+        relay2 : true
+        ...
+        relay8 : false
+```
+
+**That is the entire RTDB tree.** All structural metadata stays in Firestore.
+
+> **Legacy paths** `/relay1`..`/relay4` remain in RTDB until all boards are reflashed
+> with the new per-device firmware. They are removed via the cleanup script afterward.
+
+---
 
 ## Firmware
 
-ESP32 controls 4 relay channels and reads 4 TTP223 capacitive touch sensors (each in A-pad bridge config = momentary, active-LOW). Touch is captured via hardware interrupt for instant response. State syncs in real time with Firebase RTDB.
+### Production Sketch
 
-See [`firmware/4DeviceSwitchControl/4DeviceSwitchControl.ino`](firmware/4DeviceSwitchControl/4DeviceSwitchControl.ino) for the current production sketch.
+`firmware/4DeviceSwitchControl/4DeviceSwitchControl.ino`
 
-**Required libraries:**
-- `Firebase_ESP_Client` by Mobizt v4.4.17
-- `ArduinoJson` v7.4.1
+- ESP32 DevKIT V1 + 4-channel 5V active-LOW relay module
+- 4× TTP223 capacitive touch sensors (A-pad bridged → active-LOW momentary)
+- Hardware interrupts (`FALLING` edge, `IRAM_ATTR` ISRs) — tap detection regardless of
+  Firebase blocking in the main loop
+- 150 ms software debounce per channel
+- RTDB polled every 500 ms to apply remote changes from the dashboard
+- **Do not modify this file** — it is the reference template for the firmware generator
+
+### Relay Board Support
+
+| Board type | Channels | Max appliances per ESP32 |
+|---|---|---|
+| 4-channel relay module | 4 | 4 |
+| 8-channel relay module | 8 | 8 |
+
+The system **auto-selects** the board type from appliance count per board:
+
+| Appliance count | Board type chosen | Warning shown |
+|---|---|---|
+| 1 – 4 | 4-channel firmware | — |
+| 5 – 8 | 8-channel firmware | ⚠ Upgrade required — re-flash needed |
+| 9+ | Second board required | ⚠ New board auto-created |
+
+Downgrading (removing appliances below 5) suggests — but never forces — a switch back
+to the 4-channel firmware.
+
+### Firmware Generation (Download Button)
+
+Admin never edits a `.ino` file by hand. The flow:
+
+```
+1. Admin creates House → Room → Appliances in the dashboard
+2. Each Room has one or more Boards (one per physical switchboard location)
+3. Admin assigns each appliance to a relay slot + switch type via the visual slot editor
+4. Admin clicks [⬇ Download Firmware] on a board card
+5. Modal asks: Wi-Fi SSID + Wi-Fi Password
+6. Backend generates a fully-configured .ino → browser downloads it
+7. Admin opens Arduino IDE → flashes to ESP32 → installs in switchboard
+```
+
+**Generated filename:** `AmiKunj_Hall_Board1.ino`
+
+**What is injected at download time:**
+
+| Field | Source |
+|---|---|
+| `DEVICE_ID` | Auto-generated at board creation — permanent, never changes |
+| `WIFI_SSID` / `WIFI_PASS` | Entered in the download modal |
+| Firebase host + API key | Backend environment variables |
+| Firebase auth credentials | Dedicated non-admin ESP32 device account |
+| RTDB relay paths | `/devices/{deviceId}/relays/relay1..8` |
+| GPIO pin definitions | Based on 4-ch or 8-ch relay board template |
+| ISR setup per relay | Conditional on `switchType` (see below) |
+
+**Firmware update badge** (`🔴 Update Available`) appears when:
+- Appliance added or removed from the board
+- Relay slot assignment changed
+- Switch type changed
+
+The badge does **not** appear for appliance renames or icon changes — those are cosmetic
+and the ESP32 is unaffected.
+
+### Appliance Switch Types
+
+| Type | Hardware | Firmware |
+|---|---|---|
+| **Touch Switch** *(default)* | TTP223 capacitive sensor | `FALLING` ISR, 150 ms debounce |
+| **Click Switch** | Mechanical push button | `FALLING` ISR, 50 ms debounce |
+| **None** (app only) | No physical switch | No ISR, no input GPIO allocated |
+
+### Appliance Rename & Icon Change
+
+Names and icons are **cosmetic Firestore fields only**. Renaming is always safe:
+
+- RTDB paths use `deviceId + relaySlot` — never the appliance name
+- Rename → Firestore updated → all dashboards reflect change instantly (real-time)
+- Generated `.ino` header comments update on next download, relay logic unchanged
+- Both users and admin can rename; only admin can change relay slot or switch type
+
+---
 
 ## Website
 
-Multi-tenant dashboard where each house has its own data, multiple persons can control a single house, and a single admin manages everything.
+Multi-tenant dashboard:
 
-See [`website/README.md`](website/README.md) for full setup, schema, and architecture.
+- A **person** can be linked to multiple houses
+- A **house** can have multiple contact persons
+- An **admin** manages all persons, houses, rooms, boards, and appliances
+- A **user** sees only their linked houses; can control appliances and rename/re-icon them
+
+See [`website/README.md`](website/README.md) for full setup, API routes, schema detail,
+and local development instructions.
+
+---
+
+## UI/UX Features
+
+### Find / Search Filter
+
+Available on both the User Dashboard and Admin Dashboard. Three cascading searchable
+dropdowns with AND logic:
+
+```
+[ 🏠 House ▼ ]   [ 🚪 Room ▼ ]   [ ⚡ Appliance Type ▼ ]
+```
+
+- All three fields are **comboboxes** — type to filter the list OR click to pick
+- Room dropdown **cascades**: if a house is selected only that house's rooms are shown
+- Active filters displayed as removable chips with a live result count badge
+- Results switch to a **flat card view** with house › room breadcrumbs + live toggle
+- Mobile: filter panel collapses; active-filter count shown as a badge on the toggle button
+
+### Appliance Cards
+
+- Long-press or ··· menu → **Edit Appliance** modal (name + icon picker)
+- Toggle works directly from search result cards — no page navigation needed
+- 44 px minimum touch targets throughout
+
+---
 
 ## Deployment
 
-### Frontend (automatic, via GitHub Actions)
+### Frontend (automatic via GitHub Actions)
 
-Every push to `main` triggers `.github/workflows/deploy.yml`, which:
+Every push to `main` triggers `.github/workflows/deploy.yml`:
+
 1. Installs `website/frontend` dependencies
-2. Builds with `npm run build` (using GitHub Secrets for Firebase config)
-3. Publishes the `dist/` output to the `gh-pages` branch
-4. GitHub Pages serves it at https://chitrang313.github.io/Home-Automation/
+2. Builds with `npm run build` (Firebase config from GitHub Secrets)
+3. Publishes `dist/` to the `gh-pages` branch
+4. GitHub Pages serves at https://chitrang313.github.io/Home-Automation/
 
-**Setup (one-time):**
-1. Go to **Settings → Pages** and set source to **`gh-pages` branch / root**
-2. Go to **Settings → Secrets and variables → Actions** and add:
-   - `VITE_FIREBASE_API_KEY`
-   - `VITE_FIREBASE_AUTH_DOMAIN`
-   - `VITE_FIREBASE_DATABASE_URL`
-   - `VITE_FIREBASE_PROJECT_ID`
-   - `VITE_FIREBASE_STORAGE_BUCKET`
-   - `VITE_FIREBASE_MESSAGING_SENDER_ID`
-   - `VITE_FIREBASE_APP_ID`
-   - `VITE_API_URL` (the URL where your backend is deployed — see below)
+**One-time GitHub Secrets setup:**
 
-### Backend (Vercel — free forever, no credit card)
+| Secret | Value |
+|---|---|
+| `VITE_FIREBASE_API_KEY` | Firebase web API key |
+| `VITE_FIREBASE_AUTH_DOMAIN` | `<project>.firebaseapp.com` |
+| `VITE_FIREBASE_DATABASE_URL` | RTDB URL |
+| `VITE_FIREBASE_PROJECT_ID` | Firebase project ID |
+| `VITE_FIREBASE_STORAGE_BUCKET` | `<project>.appspot.com` |
+| `VITE_FIREBASE_MESSAGING_SENDER_ID` | FCM sender ID |
+| `VITE_FIREBASE_APP_ID` | Web app ID |
+| `VITE_API_URL` | Backend URL + `/api` suffix |
 
-The Express backend is configured to deploy as a Vercel serverless function via `website/backend/vercel.json`. Vercel's free Hobby tier has no time limit, requires no credit card, and gives 100 GB bandwidth + 100 GB-hours of compute per month — far more than a personal dashboard needs.
-
-**One-time setup:**
-
-1. Go to https://vercel.com and sign up with GitHub (no credit card)
-2. Click **"Add New… → Project"**
-3. Import `chitrang313/Home-Automation`
-4. **Configure:**
-   - **Root Directory:** click *Edit* and set to `website/backend`
-   - **Framework Preset:** *Other* (Vercel auto-detects Node)
-   - **Build Command:** leave empty
-   - **Output Directory:** leave empty
-5. **Environment Variables** — add these four:
-
-| Name | Value |
-|------|-------|
-| `DATABASE_URL` | `https://home-automation-a86aa-default-rtdb.firebaseio.com` |
-| `ADMIN_EMAIL` | `chitrang313@gmail.com` |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | *paste the entire contents of `firebase-service-account.json`* |
-| `CORS_ORIGIN` | `https://chitrang313.github.io` |
-
-6. Click **Deploy**. After ~30 seconds you'll get a URL like `https://home-automation-backend-xxx.vercel.app`
-7. Test it: open `https://home-automation-backend-xxx.vercel.app/api/health` — should return `{"ok":true,"ts":...}`
-
-**Auto-deploys:** Vercel watches `main` branch — every push redeploys the backend automatically.
-
-**Connect frontend to it:**
-1. GitHub → repo → Settings → Secrets and variables → Actions
-2. Update (or add) `VITE_API_URL` to: `https://home-automation-backend-xxx.vercel.app/api`
-3. Actions tab → re-run *Deploy frontend to GitHub Pages* workflow
-4. Live in ~2 min at https://chitrang313.github.io/Home-Automation/
-
-### Alternative hosts (also free)
-
-The backend code is environment-agnostic — same code works anywhere. Just set the same four env vars (and adjust the route file/output as needed):
-
-| Host | URL | Free tier notes |
-|---|---|---|
-| **Vercel** ⭐ | `*.vercel.app` | Truly free forever, no CC, fast cold starts |
-| **Render** | `*.onrender.com` | Free but service sleeps after 15-min idle (~30s cold start) |
-| **Fly.io** | `*.fly.dev` | 3 small VMs free, always-on, requires CC after signup |
-| **Firebase Functions** | `*.cloudfunctions.net` | Requires Blaze (pay-as-you-go); free quota is generous but billing must be enabled |
-
-The repo's `firebase.json` + `.firebaserc` are kept so Firebase Functions remains a one-command-away option if you switch later.
-
-### Realtime Database security rules
-
-Strict default-deny rules live at [`database.rules.json`](database.rules.json). Deploy them via:
+### Backend (Firebase Cloud Functions — recommended)
 
 ```powershell
-cd D:\Web\HomeAutomationWebsite
+npm install -g firebase-tools
+firebase login
+firebase use          # verifies .firebaserc is wired to your project
+firebase functions:secrets:set ADMIN_EMAIL
+firebase deploy --only functions
+```
+
+After deploy the CLI prints the function URL. Set it as `VITE_API_URL` in GitHub Secrets
+and re-run the frontend workflow.
+
+> Cloud Functions Gen 2 requires the Blaze plan. Personal dashboard usage is well within
+> the free quota (~$0/month).
+
+### Backend (Vercel — alternative, free forever, no credit card)
+
+```
+Root Directory : website/backend
+Framework      : Other
+Build Command  : (leave empty)
+Output Dir     : (leave empty)
+```
+
+Environment variables in Vercel:
+
+| Name | Value |
+|---|---|
+| `DATABASE_URL` | Firebase RTDB URL |
+| `ADMIN_EMAIL` | Admin Firebase Auth email |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Full JSON from `firebase-service-account.json` |
+| `CORS_ORIGIN` | `https://chitrang313.github.io` |
+
+Verify: `GET https://<backend>.vercel.app/api/health` → `{ "ok": true }`
+
+### RTDB Security Rules
+
+Strict default-deny rules live in [`database.rules.json`](database.rules.json).
+
+```powershell
+# Deploy via CLI
 firebase deploy --only database
 ```
 
-Or paste the file contents into Firebase Console → Realtime Database → Rules tab.
+Or paste into Firebase Console → Realtime Database → Rules.
 
-What the rules enforce:
-- **`/persons/*`** — a user reads only their own profile; admin reads all; only admin writes.
-- **`/houses/{houseId}`** — read/write by listed `contactPersons` of the house, or admin.
-- **`/houses/{houseId}/rooms/**`** and **`/relays/**`** — same (so dashboards work for house members).
-- **`/relay1..4`** — any authenticated user (kept open for the current ESP32 firmware).
-
-### Cleaning up legacy data
-
-There's a script that scans for left-over test paths (`/F1`, `/L1`, `/users`, …) and removes them:
-
-```powershell
-cd D:\Web\HomeAutomationWebsite\website\backend
-node scripts/cleanup-rtdb.js             # dry-run — lists what would change
-node scripts/cleanup-rtdb.js --apply     # actually delete
-```
-
-It keeps `/persons`, `/houses`, and `/relay1..4` untouched.
+Rules enforce:
+- `/persons/*` — user reads own record; admin reads all; only admin writes
+- `/houses/{houseId}` — read/write by `contactPersons` members or admin
+- `/houses/{houseId}/rooms/**` and `/relays/**` — same as parent house
+- `/devices/{deviceId}/relays/*` — any authenticated user (ESP32 device account qualifies)
+- `/relay1..4` — any authenticated user (legacy; removed after full firmware migration)
 
 ### Firmware (manual flash via Arduino IDE)
 
-The `.ino` sketches don't auto-deploy. Open in Arduino IDE 2.x, select your ESP32 board, fill in your Wi-Fi / Firebase credentials, and flash. We're keeping credentials manually-set rather than in version control for security.
+1. Download the generated `.ino` from the admin dashboard (or use
+   `4DeviceSwitchControl.ino` for legacy boards)
+2. Open in Arduino IDE 2.x
+3. Select ESP32 Dev Module board + correct COM port
+4. Flash
+
+Credentials are injected at generation time. **Never commit credentials to git.**
+
+**Required Arduino libraries:**
+- `Firebase_ESP_Client` by Mobizt ≥ 4.4.17
+- `ArduinoJson` ≥ 7.4.1
+
+---
 
 ## Local Development
 
-See [`website/README.md`](website/README.md) for backend + frontend dev setup.
+See [`website/README.md`](website/README.md) for step-by-step backend + frontend setup.
+
+---
+
+## Database Cleanup Script
+
+Removes legacy test paths (`/F1`, `/L1`, `/users`, `/test`) left from early development:
+
+```powershell
+cd D:\Web\HomeAutomationWebsite\website\backend
+node scripts/cleanup-rtdb.js          # dry-run — lists what would change
+node scripts/cleanup-rtdb.js --apply  # actually delete
+```
+
+Keeps `/persons`, `/houses`, `/devices`, and `/relay1..4` untouched.

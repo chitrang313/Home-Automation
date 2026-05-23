@@ -1,0 +1,96 @@
+rules_version = '2';
+
+// ============================================================================
+//  Firestore Security Rules — Home Automation
+//
+//  All structured data (persons, houses, rooms, boards, appliances) lives here.
+//  Live relay ON/OFF state is in RTDB — see database.rules.json.
+//
+//  Permission model:
+//    Admin:     full access (custom claim auth.token.admin === true)
+//    Member:    can read/write their own person doc; can read houses they
+//               are listed in (house.contactPersons[uid] === true); can
+//               edit appliance cosmetic fields (name, icon).
+//    Anonymous: no access.
+// ============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Reusable predicates ────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.admin == true;
+    }
+    function isMe(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+    function isMemberOf(houseId) {
+      return isSignedIn() && (
+        isAdmin() ||
+        get(/databases/$(database)/documents/houses/$(houseId))
+          .data.contactPersons[request.auth.uid] == true
+      );
+    }
+    // Only-these-fields changed in a patch (cosmetic appliance edits)
+    function diffKeysSubsetOf(allowed) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed);
+    }
+
+    // ─── PERSONS ────────────────────────────────────────────────────────────
+    // Doc ID = Firebase Auth UID. A person reads only their own profile;
+    // admin reads anyone. All writes are admin-only (creation happens via
+    // the backend during signup).
+    match /persons/{personId} {
+      allow read:  if isAdmin() || isMe(personId);
+      allow write: if isAdmin();
+    }
+
+    // ─── HOUSES ─────────────────────────────────────────────────────────────
+    match /houses/{houseId} {
+      // Read: admin OR a member (key in contactPersons map).
+      allow read: if isAdmin() ||
+                     (isSignedIn() && resource.data.contactPersons[request.auth.uid] == true);
+
+      // Create / Delete: admin only.
+      allow create, delete: if isAdmin();
+
+      // Update:
+      //   - admin: anything
+      //   - member: only name / location  (NOT contactPersons or createdAt)
+      allow update: if isAdmin() ||
+                       (isSignedIn() &&
+                        resource.data.contactPersons[request.auth.uid] == true &&
+                        diffKeysSubsetOf(['name', 'location']));
+
+      // ─── ROOMS ────────────────────────────────────────────────────────────
+      match /rooms/{roomId} {
+        allow read, create, update, delete: if isMemberOf(houseId);
+
+        // ─── BOARDS ──────────────────────────────────────────────────────────
+        // Admin-only writes — they are the physical-hardware contract.
+        match /boards/{boardId} {
+          allow read:  if isMemberOf(houseId);
+          allow write: if isAdmin();
+        }
+
+        // ─── APPLIANCES ──────────────────────────────────────────────────────
+        // Read: any member.
+        // Create / delete: admin only (they touch board slot allocation).
+        // Update:
+        //   - admin: anything
+        //   - member: only the cosmetic fields name + icon (rename + icon
+        //     change must never break the relay wiring)
+        match /appliances/{applianceId} {
+          allow read:           if isMemberOf(houseId);
+          allow create, delete: if isAdmin();
+          allow update:         if isAdmin() ||
+                                   (isMemberOf(houseId) &&
+                                    diffKeysSubsetOf(['name', 'icon']));
+        }
+      }
+    }
+  }
+}
