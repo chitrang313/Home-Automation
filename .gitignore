@@ -1,9 +1,11 @@
-node_modules/
-dist/
-build/
-.env
-.env.local
-.env.*.local
-*.log
+# ─── Root-level ignores ─────────────────────────────────────────────────────────
+# OS / IDE
 .DS_Store
-firebase-service-account.json
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Claude Code local state
+.claude/

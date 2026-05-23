@@ -1,103 +1,84 @@
-# Home Automation Web Platform
+# Home Automation
 
-Multi-tenant home automation system. Admin manages users and their houses; each user controls only their own appliances. Backed by Firebase (Auth + Realtime DB), works with the existing ESP32 firmware unchanged.
+End-to-end IoT home automation system: ESP32-based 4-channel relay controller with capacitive touch inputs + a multi-tenant web dashboard.
 
-## Folder Structure
+**Live demo:** https://chitrang313.github.io/Home-Automation/
 
-```
-HomeAutomationWebsite/
-├── backend/          Node.js + Express + Firebase Admin SDK
-└── frontend/         React + Vite + Tailwind CSS
-```
+> ⚠️ **Note:** The live URL serves only the static React frontend. Sign-up / login / admin features require the Node.js backend, which must be deployed separately (see [Deployment](#deployment) below).
 
-## Firebase DB Schema
+## Repository Structure
 
 ```
-/persons/{personId}                  (personId = Firebase Auth uid)
-  - name, email, contact, role ("user" | "admin")
-  - houseIds: { houseId1: true, ... }       ← reverse index
-  - createdAt
-
-/houses/{houseId}                    (auto-generated push key)
-  - name, location
-  - contactPersons: { personId1: true, ... }
-  - createdAt
-
-/houses/{houseId}/rooms/{roomId}
-  - name, order
-
-/houses/{houseId}/rooms/{roomId}/appliances/{applianceId}
-  - name, icon, relayPath  ← e.g. "/relay1" or "/devices/ESP32_001/relay1"
-
-/relay1 .. /relay4         LEGACY paths — existing .ino keeps writing/reading here
-/devices/{deviceId}/relays/relay1..4   NEW per-device paths (future-proof)
+Home-Automation/
+├── firmware/                          ← Arduino .ino sketches for ESP32
+│   ├── 4DeviceButtonControl/          Push-button + relay (toggle on release)
+│   ├── 4DeviceSwitchControl/          TTP223 capacitive touch + relay (interrupt-driven)
+│   ├── NeoPixel_Test/                 WS2812B test sketch
+│   └── WebUI_ESP32_Firebase_4Relay_V1/  Legacy single-page web UI (kept for reference)
+│
+├── website/                           ← Multi-tenant dashboard
+│   ├── backend/                       Node.js + Express + Firebase Admin SDK
+│   └── frontend/                      React 18 + Vite + Tailwind + React Router v6
+│
+└── .github/workflows/                 CI/CD (GitHub Pages deploy for frontend)
 ```
 
-**Many-to-many:** A house has a `contactPersons` map (anyone in it can control the appliances). A person has a `houseIds` map (the houses they can access). Admin manages both sides and links them.
+## Firmware
 
-## Setup
+ESP32 controls 4 relay channels and reads 4 TTP223 capacitive touch sensors (each in A-pad bridge config = momentary, active-LOW). Touch is captured via hardware interrupt for instant response. State syncs in real time with Firebase RTDB.
 
-### 1. Firebase project preparation
+See [`firmware/4DeviceSwitchControl/4DeviceSwitchControl.ino`](firmware/4DeviceSwitchControl/4DeviceSwitchControl.ino) for the current production sketch.
 
-You already have a Firebase project (`home-automation-a86aa`). You need:
+**Required libraries:**
+- `Firebase_ESP_Client` by Mobizt v4.4.17
+- `ArduinoJson` v7.4.1
 
-1. **Service Account Key** (for backend Admin SDK):
-   - Firebase Console → Project Settings → Service Accounts → "Generate new private key"
-   - Save the downloaded JSON as `backend/firebase-service-account.json`
-2. **Web Config** (for frontend):
-   - Project Settings → General → "Your apps" → Web app config
-   - Copy `apiKey`, `authDomain`, `databaseURL`, `projectId`, etc.
+## Website
 
-### 2. Backend
+Multi-tenant dashboard where each house has its own data, multiple persons can control a single house, and a single admin manages everything.
 
-```powershell
-cd D:\Web\HomeAutomationWebsite\backend
-npm install
-copy .env.example .env
-# edit .env: set ADMIN_EMAIL, DATABASE_URL
-npm run dev
-```
+See [`website/README.md`](website/README.md) for full setup, schema, and architecture.
 
-Backend runs at http://localhost:5000
+## Deployment
 
-### 3. Frontend
+### Frontend (automatic, via GitHub Actions)
 
-```powershell
-cd D:\Web\HomeAutomationWebsite\frontend
-npm install
-copy .env.example .env
-# edit .env with your Firebase web config
-npm run dev
-```
+Every push to `main` triggers `.github/workflows/deploy.yml`, which:
+1. Installs `website/frontend` dependencies
+2. Builds with `npm run build` (using GitHub Secrets for Firebase config)
+3. Publishes the `dist/` output to the `gh-pages` branch
+4. GitHub Pages serves it at https://chitrang313.github.io/Home-Automation/
 
-Frontend runs at http://localhost:5173
+**Setup (one-time):**
+1. Go to **Settings → Pages** and set source to **`gh-pages` branch / root**
+2. Go to **Settings → Secrets and variables → Actions** and add:
+   - `VITE_FIREBASE_API_KEY`
+   - `VITE_FIREBASE_AUTH_DOMAIN`
+   - `VITE_FIREBASE_DATABASE_URL`
+   - `VITE_FIREBASE_PROJECT_ID`
+   - `VITE_FIREBASE_STORAGE_BUCKET`
+   - `VITE_FIREBASE_MESSAGING_SENDER_ID`
+   - `VITE_FIREBASE_APP_ID`
+   - `VITE_API_URL` (the URL where your backend is deployed — see below)
 
-### 4. Make yourself admin
+### Backend (manual, recommended: Render or Railway)
 
-After the backend starts the first time, run this once to grant admin role to your email:
+GitHub Pages cannot run Node.js, so the Express backend needs a separate host. Recommended free options:
 
-```powershell
-cd backend
-node scripts/make-admin.js chitrang313@gmail.com
-```
+- **Render** (https://render.com): Free web service, auto-deploys on git push, easy env-var management
+- **Railway** (https://railway.app): Free tier with 500 hours/month, very fast setup
+- **Fly.io** (https://fly.io): Free tier with 3 small VMs
 
-This sets the `admin: true` custom claim and creates `/users/{yourUid}/role = "admin"` in the DB.
+Whichever you pick, the backend needs:
+1. `website/backend/firebase-service-account.json` uploaded as a secret file
+2. Environment variables from `website/backend/.env.example`
+3. Public HTTPS URL (e.g. `https://home-automation-backend.onrender.com`)
+4. Update `VITE_API_URL` GitHub Secret to that URL, then re-run the deploy workflow
 
-## ESP32 Integration (do later — DO NOT MODIFY .INO YET)
+### Firmware (manual flash via Arduino IDE)
 
-The new schema is backward-compatible. Your current `4DeviceSwitchControl.ino` writes to `/relay1..4` — and the web UI also points to `/relay1..4` for your house's appliances. So **everything just works** without firmware changes.
+The `.ino` sketches don't auto-deploy. Open in Arduino IDE 2.x, select your ESP32 board, fill in your Wi-Fi / Firebase credentials, and flash. We're keeping credentials manually-set rather than in version control for security.
 
-When you're ready to support multiple ESP32 devices (one per house), we'll:
+## Local Development
 
-1. Migrate to `/devices/{deviceId}/relays/relayN` paths
-2. Add a `deviceId` define in the .ino so each ESP32 knows its own path prefix
-3. Create a dedicated Firebase Auth "device account" per ESP32 (so user password changes never break firmware)
-
-For now, the website uses your existing `/relay1..4` paths. **No .ino changes needed.**
-
-## User Flow
-
-1. New user signs up → backend creates `/users/{uid}` + `/houses/{houseId}` with empty rooms
-2. Admin (you) signs in → sees Admin Dashboard with all users + can CRUD their houses/rooms/appliances
-3. Regular user signs in → sees their House Dashboard with horizontal-scroll room tabs; click a room → see appliance toggles
-4. Each appliance toggle writes to its configured `relayPath` in Firebase → ESP32 reacts in real time
+See [`website/README.md`](website/README.md) for backend + frontend dev setup.
