@@ -81,14 +81,22 @@ service cloud.firestore {
         // Create / delete: admin only (they touch board slot allocation).
         // Update:
         //   - admin: anything
-        //   - member: only the cosmetic fields name + icon (rename + icon
-        //     change must never break the relay wiring)
+        //   - member: only the cosmetic / personalisation fields. These
+        //     never affect relay wiring and may be updated by any member:
+        //       name, icon              — rename + icon change
+        //       favorite                — star toggle
+        //       sortIndex               — drag-to-reorder
+        //       usageCount, lastUsedAt  — auto-incremented on toggle
         match /appliances/{applianceId} {
           allow read:           if isMemberOf(houseId);
           allow create, delete: if isAdmin();
           allow update:         if isAdmin() ||
                                    (isMemberOf(houseId) &&
-                                    diffKeysSubsetOf(['name', 'icon']));
+                                    diffKeysSubsetOf([
+                                      'name', 'icon',
+                                      'favorite', 'sortIndex',
+                                      'usageCount', 'lastUsedAt',
+                                    ]));
         }
       }
     }

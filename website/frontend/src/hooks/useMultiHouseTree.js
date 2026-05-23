@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { flattenTree } from './useHouseTree';
+import { sortAppliances } from '../utils/applianceSort';
 
 /**
  * useMultiHouseTree — for screens that need to see appliances across
@@ -34,7 +35,7 @@ export default function useMultiHouseTree(houseIds) {
                 api.listBoards(hid, r.id),
                 api.listAppliances(hid, r.id),
               ]);
-              return { ...r, boards, appliances };
+              return { ...r, boards, appliances: sortAppliances(appliances) };
             })
           );
           return { house, rooms: enriched };
