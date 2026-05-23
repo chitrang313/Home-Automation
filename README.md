@@ -108,6 +108,35 @@ The backend code is environment-agnostic — same code works anywhere. Just set 
 
 The repo's `firebase.json` + `.firebaserc` are kept so Firebase Functions remains a one-command-away option if you switch later.
 
+### Realtime Database security rules
+
+Strict default-deny rules live at [`database.rules.json`](database.rules.json). Deploy them via:
+
+```powershell
+cd D:\Web\HomeAutomationWebsite
+firebase deploy --only database
+```
+
+Or paste the file contents into Firebase Console → Realtime Database → Rules tab.
+
+What the rules enforce:
+- **`/persons/*`** — a user reads only their own profile; admin reads all; only admin writes.
+- **`/houses/{houseId}`** — read/write by listed `contactPersons` of the house, or admin.
+- **`/houses/{houseId}/rooms/**`** and **`/relays/**`** — same (so dashboards work for house members).
+- **`/relay1..4`** — any authenticated user (kept open for the current ESP32 firmware).
+
+### Cleaning up legacy data
+
+There's a script that scans for left-over test paths (`/F1`, `/L1`, `/users`, …) and removes them:
+
+```powershell
+cd D:\Web\HomeAutomationWebsite\website\backend
+node scripts/cleanup-rtdb.js             # dry-run — lists what would change
+node scripts/cleanup-rtdb.js --apply     # actually delete
+```
+
+It keeps `/persons`, `/houses`, and `/relay1..4` untouched.
+
 ### Firmware (manual flash via Arduino IDE)
 
 The `.ino` sketches don't auto-deploy. Open in Arduino IDE 2.x, select your ESP32 board, fill in your Wi-Fi / Firebase credentials, and flash. We're keeping credentials manually-set rather than in version control for security.

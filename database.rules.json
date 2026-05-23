@@ -1,0 +1,64 @@
+{
+  "rules": {
+    // Default DENY at every path — anything not explicitly allowed below is forbidden.
+    ".read": false,
+    ".write": false,
+
+    // ─── PERSONS ────────────────────────────────────────────────────────────────
+    "persons": {
+      // Admin can list everyone (used by Admin Panel "Persons" tab)
+      ".read": "auth != null && auth.token.admin === true",
+
+      "$uid": {
+        // A logged-in person reads only their own profile; admin reads any
+        ".read": "auth != null && (auth.uid === $uid || auth.token.admin === true)",
+
+        // Only admin creates / modifies / deletes person records
+        ".write": "auth != null && auth.token.admin === true",
+
+        // Minimum shape validation when writing
+        ".validate": "newData.hasChildren(['name', 'email']) || !newData.exists()"
+      }
+    },
+
+    // ─── HOUSES ────────────────────────────────────────────────────────────────
+    "houses": {
+      // Admin lists all houses (Admin Panel "Houses" tab)
+      ".read": "auth != null && auth.token.admin === true",
+
+      "$houseId": {
+        // Admin, OR any contact person of this house, can read the full house
+        ".read": "auth != null && (auth.token.admin === true || data.child('contactPersons').child(auth.uid).val() === true)",
+
+        // Top-level house create/delete is admin-only (creating contactPersons,
+        // changing name/location at the root, etc.)
+        ".write": "auth != null && auth.token.admin === true",
+
+        // Contact persons (and admin) can read/write rooms — i.e. the user
+        // dashboard can render and edit room structure, appliance entries.
+        "rooms": {
+          ".read": "auth != null && (auth.token.admin === true || root.child('houses').child($houseId).child('contactPersons').child(auth.uid).val() === true)",
+          ".write": "auth != null && (auth.token.admin === true || root.child('houses').child($houseId).child('contactPersons').child(auth.uid).val() === true)"
+        },
+
+        // Auto-generated relay-state nodes — toggleable by any contact person
+        // of the house, OR admin. This is the path the new ApplianceCard writes
+        // to when relayPath = /houses/{houseId}/relays/{applianceId}.
+        "relays": {
+          ".read": "auth != null && (auth.token.admin === true || root.child('houses').child($houseId).child('contactPersons').child(auth.uid).val() === true)",
+          ".write": "auth != null && (auth.token.admin === true || root.child('houses').child($houseId).child('contactPersons').child(auth.uid).val() === true)"
+        }
+      }
+    },
+
+    // ─── LEGACY ESP32 RELAY PATHS ──────────────────────────────────────────────
+    // The current .ino sketch reads/writes these directly. ESP32 logs in with
+    // the admin's email/password, so it gets auth.token.admin === true. Once the
+    // firmware moves to /devices/{deviceId}/* with a dedicated service account,
+    // these can be tightened or removed.
+    "relay1": { ".read": "auth != null", ".write": "auth != null" },
+    "relay2": { ".read": "auth != null", ".write": "auth != null" },
+    "relay3": { ".read": "auth != null", ".write": "auth != null" },
+    "relay4": { ".read": "auth != null", ".write": "auth != null" }
+  }
+}
