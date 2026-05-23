@@ -61,45 +61,52 @@ Every push to `main` triggers `.github/workflows/deploy.yml`, which:
    - `VITE_FIREBASE_APP_ID`
    - `VITE_API_URL` (the URL where your backend is deployed — see below)
 
-### Backend (Firebase Cloud Functions)
+### Backend (Vercel — free forever, no credit card)
 
-The Express backend deploys as a **Gen 2 HTTPS Cloud Function** in the same Firebase project — no separate hosting account, no service-account JSON to upload, no CORS surprises.
+The Express backend is configured to deploy as a Vercel serverless function via `website/backend/vercel.json`. Vercel's free Hobby tier has no time limit, requires no credit card, and gives 100 GB bandwidth + 100 GB-hours of compute per month — far more than a personal dashboard needs.
 
 **One-time setup:**
 
-```powershell
-# 1. Install Firebase CLI (once on your machine)
-npm install -g firebase-tools
+1. Go to https://vercel.com and sign up with GitHub (no credit card)
+2. Click **"Add New… → Project"**
+3. Import `chitrang313/Home-Automation`
+4. **Configure:**
+   - **Root Directory:** click *Edit* and set to `website/backend`
+   - **Framework Preset:** *Other* (Vercel auto-detects Node)
+   - **Build Command:** leave empty
+   - **Output Directory:** leave empty
+5. **Environment Variables** — add these four:
 
-# 2. Login
-firebase login
+| Name | Value |
+|------|-------|
+| `DATABASE_URL` | `https://home-automation-a86aa-default-rtdb.firebaseio.com` |
+| `ADMIN_EMAIL` | `chitrang313@gmail.com` |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | *paste the entire contents of `firebase-service-account.json`* |
+| `CORS_ORIGIN` | `https://chitrang313.github.io` |
 
-# 3. Verify the project is selected (already wired via .firebaserc)
-firebase use
+6. Click **Deploy**. After ~30 seconds you'll get a URL like `https://home-automation-backend-xxx.vercel.app`
+7. Test it: open `https://home-automation-backend-xxx.vercel.app/api/health` — should return `{"ok":true,"ts":...}`
 
-# 4. Set the ADMIN_EMAIL secret (you'll be prompted to paste the value)
-firebase functions:secrets:set ADMIN_EMAIL
-# enter: chitrang313@gmail.com
-```
-
-**Deploy:**
-
-```powershell
-cd D:\Web\HomeAutomationWebsite
-firebase deploy --only functions
-```
-
-After deploy completes, the URL appears in the CLI output:
-```
-Function URL (api(us-central1)): https://us-central1-home-automation-a86aa.cloudfunctions.net/api
-```
+**Auto-deploys:** Vercel watches `main` branch — every push redeploys the backend automatically.
 
 **Connect frontend to it:**
-1. Copy that URL + `/api` suffix
-2. GitHub → Settings → Secrets → set `VITE_API_URL` to `https://us-central1-home-automation-a86aa.cloudfunctions.net/api`
-3. Re-run the `Deploy frontend to GitHub Pages` workflow → frontend now talks to the live backend
+1. GitHub → repo → Settings → Secrets and variables → Actions
+2. Update (or add) `VITE_API_URL` to: `https://home-automation-backend-xxx.vercel.app/api`
+3. Actions tab → re-run *Deploy frontend to GitHub Pages* workflow
+4. Live in ~2 min at https://chitrang313.github.io/Home-Automation/
 
-**Note on Firebase plan:** Cloud Functions Gen 2 requires the **Blaze (pay-as-you-go)** plan. The free tier is generous (2M invocations + 400K GB-seconds per month) — for a personal home-automation dashboard, expect $0/month. To upgrade, go to Firebase Console → ⚙️ Project Settings → Usage and billing → Modify plan.
+### Alternative hosts (also free)
+
+The backend code is environment-agnostic — same code works anywhere. Just set the same four env vars (and adjust the route file/output as needed):
+
+| Host | URL | Free tier notes |
+|---|---|---|
+| **Vercel** ⭐ | `*.vercel.app` | Truly free forever, no CC, fast cold starts |
+| **Render** | `*.onrender.com` | Free but service sleeps after 15-min idle (~30s cold start) |
+| **Fly.io** | `*.fly.dev` | 3 small VMs free, always-on, requires CC after signup |
+| **Firebase Functions** | `*.cloudfunctions.net` | Requires Blaze (pay-as-you-go); free quota is generous but billing must be enabled |
+
+The repo's `firebase.json` + `.firebaserc` are kept so Firebase Functions remains a one-command-away option if you switch later.
 
 ### Firmware (manual flash via Arduino IDE)
 
