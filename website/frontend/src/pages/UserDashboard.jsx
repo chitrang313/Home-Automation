@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { api } from '../services/api';
 import RoomTabs from '../components/RoomTabs';
 import ApplianceCard from '../components/ApplianceCard';
+import SortableApplianceGrid from '../components/SortableApplianceGrid';
 import EditApplianceModal from '../components/EditApplianceModal';
 import SearchFilter from '../components/SearchFilter';
 import useMultiHouseTree from '../hooks/useMultiHouseTree';
@@ -51,15 +52,30 @@ export default function UserDashboard() {
   const [filter, setFilter] = useState({ houseId: '', roomId: '', type: '' });
   const filterActive = !!(filter.houseId || filter.roomId || filter.type);
 
+  // Favourites-only switch (independent of search filter — orthogonal).
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+
   const filtered = useMemo(() => {
     if (!filterActive) return [];
     return appliances.filter((a) => {
       if (filter.houseId && a.houseId !== filter.houseId) return false;
       if (filter.roomId  && a.roomId  !== filter.roomId)  return false;
       if (filter.type    && a.type    !== filter.type)    return false;
+      if (favoritesOnly  && !a.favorite)                  return false;
       return true;
     });
-  }, [appliances, filter, filterActive]);
+  }, [appliances, filter, filterActive, favoritesOnly]);
+
+  // Appliances to render inside the currently-selected room. When the
+  // header star is active, only favourites in this room appear.
+  const visibleRoomAppliances = useMemo(() => {
+    if (!activeRoom) return [];
+    return favoritesOnly
+      ? activeRoom.appliances.filter((a) => a.favorite)
+      : activeRoom.appliances;
+  }, [activeRoom, favoritesOnly]);
+
+  const roomHasAnyFavorite = !!activeRoom?.appliances?.some((a) => a.favorite);
 
   // ─── Edit modal state ──────────────────────────────────────────────────
   const [editing, setEditing] = useState(null);
@@ -139,9 +155,12 @@ export default function UserDashboard() {
               <ApplianceCard
                 key={`${a.houseId}-${a.roomId}-${a.id}`}
                 appliance={a}
+                houseId={a.houseId}
+                roomId={a.roomId}
                 deviceId={a.deviceId}
                 subtitle={`${a.houseName} › ${a.roomName}`}
                 onEdit={() => openEdit(a.houseId, a.roomId, a.id)}
+                onFavoriteChanged={refresh}
               />
             ))}
           </section>
@@ -158,33 +177,44 @@ export default function UserDashboard() {
               )}
             </section>
 
-            <section className="mb-5">
-              <RoomTabs
-                rooms={activeRooms}
-                activeId={activeRoom?.id}
-                onSelect={setActiveRoomId}
+            <section className="mb-4 flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <RoomTabs
+                  rooms={activeRooms}
+                  activeId={activeRoom?.id}
+                  onSelect={setActiveRoomId}
+                />
+              </div>
+              {/* Favourites-only filter for the current room */}
+              <FavoritesToggle
+                active={favoritesOnly}
+                onToggle={() => setFavoritesOnly((v) => !v)}
+                disabled={!roomHasAnyFavorite && !favoritesOnly}
+                count={activeRoom?.appliances.filter((a) => a.favorite).length || 0}
               />
             </section>
 
-            <section className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
-              {!activeRoom || activeRoom.appliances.length === 0 ? (
-                <div className="text-ink/50 text-sm">
-                  No appliances in this room yet.
-                </div>
-              ) : (
-                activeRoom.appliances.map((a) => {
-                  const board = activeRoom.boards.find((b) => b.id === a.boardId);
-                  return (
-                    <ApplianceCard
-                      key={a.id}
-                      appliance={a}
-                      deviceId={board?.deviceId}
-                      onEdit={() => openEdit(activeTree.house.id, activeRoom.id, a.id)}
-                    />
-                  );
-                })
-              )}
-            </section>
+            {!activeRoom || activeRoom.appliances.length === 0 ? (
+              <div className="text-ink/50 text-sm">
+                No appliances in this room yet.
+              </div>
+            ) : visibleRoomAppliances.length === 0 ? (
+              <div className="card text-center py-8 text-sm text-ink/55">
+                No favourites in this room yet. Tap the ☆ on any appliance to add it.
+              </div>
+            ) : (
+              <SortableApplianceGrid
+                houseId={activeTree.house.id}
+                roomId={activeRoom.id}
+                appliances={visibleRoomAppliances}
+                boards={activeRoom.boards}
+                onEdit={(a) => openEdit(activeTree.house.id, activeRoom.id, a.id)}
+                onChange={refresh}
+                // When showing only favourites the visible order is a subset of
+                // the full list — disable drag so we don't write a partial order.
+                disabled={favoritesOnly}
+              />
+            )}
           </>
         )
       )}
@@ -223,5 +253,53 @@ function SearchOff({ className }) {
       <circle cx="11" cy="11" r="7" />
       <path d="M21 21l-4.3-4.3M8 8l6 6M14 8l-6 6" strokeLinecap="round" />
     </svg>
+  );
+}
+
+/**
+ * Header-level filter button. Active → only favourite appliances are
+ * shown inside the currently-selected room. Disabled (with an empty
+ * count) when the room has no favourites yet — a tooltip hints how to
+ * add one.
+ */
+function FavoritesToggle({ active, onToggle, disabled, count }) {
+  const title = disabled
+    ? 'No favourites yet — tap the ☆ on any appliance card to add one'
+    : active
+      ? 'Show all appliances'
+      : 'Show favourites only';
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={disabled}
+      aria-pressed={active}
+      title={title}
+      className={
+        'shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition ' +
+        (active
+          ? 'bg-amber-400/15 text-amber-700 ring-1 ring-amber-400/40'
+          : 'bg-slate1 text-ink/70 hover:bg-slate2') +
+        ' disabled:opacity-50 disabled:cursor-not-allowed'
+      }
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill={active ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+        className="w-4 h-4"
+      >
+        <path d="M12 3.5l2.65 5.37 5.93.86-4.29 4.18 1.01 5.9L12 17l-5.3 2.81 1.01-5.9L3.42 9.73l5.93-.86L12 3.5z" />
+      </svg>
+      <span>Favourites</span>
+      {count > 0 && (
+        <span className={
+          'inline-flex items-center justify-center min-w-5 h-5 px-1.5 text-[11px] rounded-full ' +
+          (active ? 'bg-amber-500 text-white' : 'bg-slate2 text-ink/70')
+        }>{count}</span>
+      )}
+    </button>
   );
 }

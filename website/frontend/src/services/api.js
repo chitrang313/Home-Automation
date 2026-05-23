@@ -94,6 +94,30 @@ export const api = {
   updateAppliance: (hid, rid, aid, body)  => request(`/houses/${hid}/rooms/${rid}/appliances/${aid}`, { method: 'PATCH', body }),
   deleteAppliance: (hid, rid, aid)        => request(`/houses/${hid}/rooms/${rid}/appliances/${aid}`, { method: 'DELETE' }),
 
+  // ─── Appliance personalisation (star / drag-sort / usage) ─────────────
+  /** Toggle the favourite-star on an appliance. */
+  setApplianceFavorite: (hid, rid, aid, favorite) =>
+    request(`/houses/${hid}/rooms/${rid}/appliances/${aid}`, {
+      method: 'PATCH',
+      body: { favorite: !!favorite },
+    }),
+  /** Atomically increment usageCount + stamp lastUsedAt — call on every toggle. */
+  bumpApplianceUsage: (hid, rid, aid) =>
+    request(`/houses/${hid}/rooms/${rid}/appliances/${aid}`, {
+      method: 'PATCH',
+      body: { bumpUsage: true },
+    }),
+  /** Persist a new drag-to-sort order. orderedIds = appliance IDs top→bottom. */
+  reorderAppliances: (hid, rid, orderedIds) =>
+    Promise.all(
+      orderedIds.map((aid, idx) =>
+        request(`/houses/${hid}/rooms/${rid}/appliances/${aid}`, {
+          method: 'PATCH',
+          body: { sortIndex: idx },
+        })
+      )
+    ),
+
   // ─── Firmware download ────────────────────────────────────────────────
   /**
    * Downloads the generated .ino as a Blob. Returns { blob, filename }.

@@ -628,6 +628,7 @@ function FindBody({ houseIds }) {
   // Reuse the user-side multi-tree hook to gather everything across houses.
   const { trees, appliances, rooms, loading, refresh } = useMultiHouseTree(houseIds);
   const [filter, setFilter] = useState({ houseId: '', roomId: '', type: '' });
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [editing, setEditing] = useState(null);
 
   const filtered = useMemo(() => {
@@ -635,9 +636,12 @@ function FindBody({ houseIds }) {
       if (filter.houseId && a.houseId !== filter.houseId) return false;
       if (filter.roomId  && a.roomId  !== filter.roomId)  return false;
       if (filter.type    && a.type    !== filter.type)    return false;
+      if (favoritesOnly  && !a.favorite)                  return false;
       return true;
     });
-  }, [appliances, filter]);
+  }, [appliances, filter, favoritesOnly]);
+
+  const favoritesCount = appliances.filter((a) => a.favorite).length;
 
   const openEdit = (a) => {
     const tree = trees.find((t) => t.house.id === a.houseId);
@@ -661,6 +665,32 @@ function FindBody({ houseIds }) {
         resultCount={filtered.length}
         totalCount={appliances.length}
       />
+      <div className="-mt-2 mb-4 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setFavoritesOnly((v) => !v)}
+          disabled={favoritesCount === 0 && !favoritesOnly}
+          aria-pressed={favoritesOnly}
+          className={
+            'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition ' +
+            (favoritesOnly
+              ? 'bg-amber-400/15 text-amber-700 ring-1 ring-amber-400/40'
+              : 'bg-slate1 text-ink/70 hover:bg-slate2') +
+            ' disabled:opacity-50 disabled:cursor-not-allowed'
+          }
+        >
+          <svg viewBox="0 0 24 24" fill={favoritesOnly ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" className="w-4 h-4">
+            <path d="M12 3.5l2.65 5.37 5.93.86-4.29 4.18 1.01 5.9L12 17l-5.3 2.81 1.01-5.9L3.42 9.73l5.93-.86L12 3.5z" />
+          </svg>
+          Favourites only
+          {favoritesCount > 0 && (
+            <span className={
+              'inline-flex items-center justify-center min-w-5 h-5 px-1.5 text-[11px] rounded-full ' +
+              (favoritesOnly ? 'bg-amber-500 text-white' : 'bg-slate2 text-ink/70')
+            }>{favoritesCount}</span>
+          )}
+        </button>
+      </div>
       {loading && <div className="text-ink/60 text-sm">Loading…</div>}
       {filtered.length === 0 ? (
         <div className="card text-center py-10 text-ink/50">No appliances match the current filter.</div>
@@ -670,9 +700,12 @@ function FindBody({ houseIds }) {
             <ApplianceCard
               key={`${a.houseId}-${a.roomId}-${a.id}`}
               appliance={a}
+              houseId={a.houseId}
+              roomId={a.roomId}
               deviceId={a.deviceId}
               subtitle={`${a.houseName} › ${a.roomName}`}
               onEdit={() => openEdit(a)}
+              onFavoriteChanged={refresh}
             />
           ))}
         </section>

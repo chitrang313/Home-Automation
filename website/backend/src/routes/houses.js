@@ -11,7 +11,11 @@
  *         deviceId, label, relayCount (4|8), lastDownloadAt, firmwareNeedsUpdate
  *
  *       appliances/{applianceId}
- *         name, icon, type, boardId, relaySlot, switchType, createdAt
+ *         name, icon, type, boardId, relaySlot, switchType, createdAt,
+ *         favorite (bool),      — UI star, any house member may toggle
+ *         sortIndex (number),   — drag-to-sort order within the room
+ *         usageCount (number),  — toggle counter (auto-incremented server-side)
+ *         lastUsedAt (number)   — epoch ms of last toggle
  *
  * Live relay state lives in RTDB at /devices/{deviceId}/relays/relay1..relay8.
  * That is the ONLY data still in RTDB — everything else is Firestore.
@@ -670,12 +674,16 @@ router.post(
  * PATCH appliance
  *
  * Permission model:
- *   - Any house member can change `name` and `icon` (cosmetic, never breaks
- *     the relay wiring).
- *   - Only admin can change `type`, `boardId`, `relaySlot`, `switchType`.
+ *   - Any house member can change cosmetic / personalisation fields:
+ *       name, icon, favorite, sortIndex
+ *     and may also send { bumpUsage: true } to atomically increment
+ *     usageCount and stamp lastUsedAt. These never affect relay wiring.
+ *   - Only admin can change structural fields:
+ *       type, boardId, relaySlot, switchType.
  *
- * When relaySlot / switchType / boardId changes, we set
- * board.firmwareNeedsUpdate=true so the dashboard shows a "Re-flash" badge.
+ * When a structural change touches relay wiring (boardId / relaySlot /
+ * switchType) we set board.firmwareNeedsUpdate=true so the dashboard
+ * shows a "Re-flash" badge.
  */
 router.patch(
   '/:houseId/rooms/:roomId/appliances/:applianceId',
@@ -687,22 +695,45 @@ router.patch(
         return res.status(403).json({ error: 'Forbidden' });
       }
 
-      const existingSnap = await applianceRef(houseId, roomId, applianceId).get();
+      const ref = applianceRef(houseId, roomId, applianceId);
+      const existingSnap = await ref.get();
       if (!existingSnap.exists) {
         return res.status(404).json({ error: 'Appliance not found' });
       }
       const existing = existingSnap.data();
 
-      // Pull body and split into "cosmetic" (anyone) vs "structural" (admin only)
-      const { name, icon, type, boardId, relaySlot, switchType } = req.body || {};
+      const {
+        // cosmetic (any member)
+        name, icon, favorite, sortIndex, bumpUsage,
+        // structural (admin only)
+        type, boardId, relaySlot, switchType,
+      } = req.body || {};
 
+      // ─── Cosmetic / personalisation fields ───────────────────────────
       const cosmetic = {};
-      if (name !== undefined) cosmetic.name = name;
-      if (icon !== undefined) cosmetic.icon = icon;
+      if (name      !== undefined) cosmetic.name      = name;
+      if (icon      !== undefined) cosmetic.icon      = icon;
+      if (favorite  !== undefined) cosmetic.favorite  = !!favorite;
+      if (sortIndex !== undefined) {
+        const n = Number(sortIndex);
+        if (!Number.isFinite(n)) {
+          return res.status(400).json({ error: 'sortIndex must be a number' });
+        }
+        cosmetic.sortIndex = n;
+      }
 
+      // ─── Usage-counter bump (atomic, never racy) ────────────────────
+      // Use Firestore FieldValue.increment so concurrent toggles never
+      // clobber each other's counts. Stamp lastUsedAt too for tie-breaks.
+      if (bumpUsage) {
+        cosmetic.usageCount = admin.firestore.FieldValue.increment(1);
+        cosmetic.lastUsedAt = Date.now();
+      }
+
+      // ─── Structural fields (require admin) ──────────────────────────
       const structural = {};
-      if (type !== undefined) structural.type = type;
-      if (boardId !== undefined) structural.boardId = boardId;
+      if (type      !== undefined) structural.type      = type;
+      if (boardId   !== undefined) structural.boardId   = boardId;
       if (relaySlot !== undefined) structural.relaySlot = relaySlot;
       if (switchType !== undefined) {
         if (!['touch', 'click', 'none'].includes(switchType)) {
@@ -710,7 +741,6 @@ router.patch(
         }
         structural.switchType = switchType;
       }
-
       if (Object.keys(structural).length && !req.user.admin) {
         return res
           .status(403)
@@ -739,26 +769,29 @@ router.patch(
         }
       }
 
-      await applianceRef(houseId, roomId, applianceId).set(
-        { ...cosmetic, ...structural },
-        { merge: true }
-      );
+      const merged = { ...cosmetic, ...structural };
+      if (Object.keys(merged).length) {
+        await ref.set(merged, { merge: true });
+      }
 
-      // Reconcile affected boards (could be 1 or 2 if the appliance moved)
-      const affectedBoards = new Set();
-      if (existing.boardId) affectedBoards.add(existing.boardId);
-      if (finalBoardId) affectedBoards.add(finalBoardId);
-      const needsFirmwareUpdate =
-        'boardId' in structural ||
-        'relaySlot' in structural ||
-        'switchType' in structural;
-      await Promise.all(
-        Array.from(affectedBoards).map((bid) =>
-          reconcileBoard(houseId, roomId, bid, {
-            forceFirmwareUpdate: needsFirmwareUpdate,
-          })
-        )
-      );
+      // Reconcile affected boards only when structural fields changed
+      // (cosmetic/usage bumps must NOT flag a firmware re-flash).
+      if (Object.keys(structural).length) {
+        const affectedBoards = new Set();
+        if (existing.boardId) affectedBoards.add(existing.boardId);
+        if (finalBoardId) affectedBoards.add(finalBoardId);
+        const needsFirmwareUpdate =
+          'boardId' in structural ||
+          'relaySlot' in structural ||
+          'switchType' in structural;
+        await Promise.all(
+          Array.from(affectedBoards).map((bid) =>
+            reconcileBoard(houseId, roomId, bid, {
+              forceFirmwareUpdate: needsFirmwareUpdate,
+            })
+          )
+        );
+      }
 
       res.json({ ok: true });
     } catch (err) {

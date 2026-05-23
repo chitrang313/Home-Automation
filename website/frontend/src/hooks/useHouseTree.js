@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../services/api';
+import { sortAppliances } from '../utils/applianceSort';
 
 /**
  * useHouseTree — fetches a full house tree (rooms + boards + appliances)
@@ -34,7 +35,9 @@ export default function useHouseTree(houseId) {
             api.listBoards(houseId, r.id),
             api.listAppliances(houseId, r.id),
           ]);
-          return { ...r, boards, appliances };
+          // Sort here so every consumer (cards grid, search, board lists)
+          // sees the same canonical order — manual drag overrides usage.
+          return { ...r, boards, appliances: sortAppliances(appliances) };
         })
       );
       setTree({ house, rooms: enriched });
