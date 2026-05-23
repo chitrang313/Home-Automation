@@ -1,17 +1,36 @@
+/**
+ * Persons routes — Firestore-backed.
+ *
+ * Schema: persons/{uid}
+ *   - name        string
+ *   - email       string
+ *   - contact     string (not exposed publicly to non-self/non-admin)
+ *   - role        "user" | "admin"
+ *   - houseIds    map<houseId, true>     reverse-index for fast membership check
+ *   - createdAt   number (epoch ms)
+ *
+ * Document ID is the Firebase Auth UID.
+ */
 const express = require('express');
 const { admin } = require('../firebase-admin');
 const { verifyAuth, requireAdmin } = require('../middleware/auth');
+const {
+  serializeDoc,
+  serializeSnapshot,
+  personRef,
+  houseRef,
+} = require('../utils/firestore-helpers');
+
 const router = express.Router();
 
 /**
- * GET /api/persons/me — current logged-in person's profile.
+ * GET /api/persons/me
  *
- * Permanent-admin self-heal:
- *   If the logged-in email matches ADMIN_EMAIL but the user doesn't currently
- *   have the admin custom claim, grant it (and mirror role="admin" in the DB).
- *   Tells the client to refresh its ID token by returning `tokenRefreshNeeded`.
- *   This way the admin role is restored on every login — even if it was wiped,
- *   missing at signup time, or never set because ADMIN_EMAIL was added later.
+ * Returns the current user's person profile. Includes a permanent admin
+ * self-heal: if the user's email matches ADMIN_EMAIL but the custom claim
+ * is missing (e.g. cleared by a token refresh, or first login), we re-grant
+ * the claim AND set role='admin' in Firestore, then signal the client to
+ * force-refresh its ID token.
  */
 router.get('/me', verifyAuth, async (req, res, next) => {
   try {
@@ -21,22 +40,20 @@ router.get('/me', verifyAuth, async (req, res, next) => {
 
     let tokenRefreshNeeded = false;
 
+    // ─── Admin self-heal ────────────────────────────────────────────────
     if (shouldBeAdmin && !req.user.admin) {
-      // Promote: set Firebase Auth custom claim and DB role
       await admin.auth().setCustomUserClaims(req.user.uid, { admin: true });
-      await admin.database().ref(`persons/${req.user.uid}/role`).set('admin');
+      await personRef(req.user.uid).set({ role: 'admin' }, { merge: true });
       tokenRefreshNeeded = true;
-      console.log(`[admin self-heal] granted admin to ${myEmail}`);
     }
 
-    const snap = await admin.database().ref(`persons/${req.user.uid}`).get();
-    if (!snap.exists()) return res.status(404).json({ error: 'Person profile not found' });
+    const snap = await personRef(req.user.uid).get();
+    if (!snap.exists) {
+      return res.status(404).json({ error: 'Person profile not found' });
+    }
 
-    // Report effective admin state (claim OR email-match) so the UI is correct
-    // immediately, even though the JWT itself only updates on next refresh.
     res.json({
-      id: req.user.uid,
-      ...snap.val(),
+      ...serializeDoc(snap),
       admin: req.user.admin || shouldBeAdmin,
       tokenRefreshNeeded,
     });
@@ -45,50 +62,71 @@ router.get('/me', verifyAuth, async (req, res, next) => {
   }
 });
 
-/** GET /api/persons — admin: list all persons */
+/**
+ * GET /api/persons
+ * Admin-only: list every person in the system.
+ */
 router.get('/', verifyAuth, requireAdmin, async (req, res, next) => {
   try {
-    const snap = await admin.database().ref('persons').get();
-    const persons = snap.val() || {};
-    res.json(Object.entries(persons).map(([id, p]) => ({ id, ...p })));
+    const snap = await admin.firestore().collection('persons').get();
+    res.json(serializeSnapshot(snap));
   } catch (err) {
     next(err);
   }
 });
 
 /**
- * POST /api/persons — admin: create a new person (also creates Firebase Auth user)
- * Body: { email, password, name, contact, houseIds?: [houseId, ...] }
+ * POST /api/persons
+ * Admin-only: create a Firebase Auth user + matching Firestore person doc,
+ * optionally linking to existing houses in a single atomic batch.
+ *
+ * Body: { email, password, name, contact, houseIds?: string[] }
  */
 router.post('/', verifyAuth, requireAdmin, async (req, res, next) => {
   try {
     const { email, password, name, contact, houseIds = [] } = req.body || {};
     if (!email || !password || !name || !contact) {
-      return res.status(400).json({ error: 'email, password, name, contact required' });
+      return res
+        .status(400)
+        .json({ error: 'email, password, name, contact required' });
     }
 
+    // Step 1 — create the Firebase Auth user.
+    // We do this first because if the email is already taken we want a clean
+    // 409 without partial Firestore writes.
     const userRecord = await admin.auth().createUser({
-      email, password, displayName: name,
+      email,
+      password,
+      displayName: name,
       phoneNumber: contact.startsWith('+') ? contact : undefined,
     });
 
-    const db = admin.database();
+    // Step 2 — atomic Firestore batch: write person + mirror into each
+    // house's contactPersons map so list/read stays O(1).
+    const db = admin.firestore();
+    const batch = db.batch();
     const now = Date.now();
-    const personId = userRecord.uid;
-    const houseIdsMap = {};
-    for (const h of houseIds) houseIdsMap[h] = true;
+    const houseIdsMap = Object.fromEntries(houseIds.map((h) => [h, true]));
 
-    const updates = {};
-    updates[`persons/${personId}`] = {
-      name, email, contact, role: 'user', houseIds: houseIdsMap, createdAt: now,
-    };
-    // Mirror into each house's contactPersons
-    for (const houseId of houseIds) {
-      updates[`houses/${houseId}/contactPersons/${personId}`] = true;
+    batch.set(personRef(userRecord.uid), {
+      name,
+      email,
+      contact,
+      role: 'user',
+      houseIds: houseIdsMap,
+      createdAt: now,
+    });
+
+    for (const hid of houseIds) {
+      batch.set(
+        houseRef(hid),
+        { contactPersons: { [userRecord.uid]: true } },
+        { merge: true }
+      );
     }
-    await db.ref().update(updates);
 
-    res.json({ id: personId, name, email, contact });
+    await batch.commit();
+    res.json({ id: userRecord.uid, name, email, contact });
   } catch (err) {
     if (err.code === 'auth/email-already-exists') {
       return res.status(409).json({ error: 'Email already registered' });
@@ -97,43 +135,67 @@ router.post('/', verifyAuth, requireAdmin, async (req, res, next) => {
   }
 });
 
-/** PATCH /api/persons/:id — admin: update name/contact/email */
+/**
+ * PATCH /api/persons/:id
+ * Admin-only: update name / contact / email. Mirrors changes into Firebase Auth.
+ */
 router.patch('/:id', verifyAuth, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params;
     const { name, contact, email } = req.body || {};
-    const update = {};
-    if (name !== undefined) update.name = name;
-    if (contact !== undefined) update.contact = contact;
-    if (email !== undefined) {
-      update.email = email;
-      // Also update Firebase Auth email
-      await admin.auth().updateUser(id, { email, displayName: name });
-    } else if (name !== undefined) {
-      await admin.auth().updateUser(id, { displayName: name });
+
+    const fieldsToWrite = {};
+    if (name !== undefined) fieldsToWrite.name = name;
+    if (contact !== undefined) fieldsToWrite.contact = contact;
+    if (email !== undefined) fieldsToWrite.email = email;
+
+    // Mirror name/email changes into Firebase Auth so the user's login still works.
+    const authUpdate = {};
+    if (name !== undefined) authUpdate.displayName = name;
+    if (email !== undefined) authUpdate.email = email;
+    if (Object.keys(authUpdate).length) {
+      await admin.auth().updateUser(id, authUpdate);
     }
-    await admin.database().ref(`persons/${id}`).update(update);
+
+    if (Object.keys(fieldsToWrite).length) {
+      await personRef(id).set(fieldsToWrite, { merge: true });
+    }
     res.json({ ok: true });
   } catch (err) {
     next(err);
   }
 });
 
-/** DELETE /api/persons/:id — admin: remove person, auth account, and unlink from all houses */
+/**
+ * DELETE /api/persons/:id
+ * Admin-only: remove auth account + Firestore doc + unlink from every house.
+ */
 router.delete('/:id', verifyAuth, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params;
-    const personSnap = await admin.database().ref(`persons/${id}`).get();
-    const houseIds = Object.keys(personSnap.val()?.houseIds || {});
+    const db = admin.firestore();
 
-    await admin.auth().deleteUser(id).catch(() => {});
+    // 1. Find every house the person is linked to so we can unlink them.
+    const personSnap = await personRef(id).get();
+    const linkedHouseIds = Object.keys(personSnap.data()?.houseIds || {});
 
-    const updates = { [`persons/${id}`]: null };
-    for (const hid of houseIds) {
-      updates[`houses/${hid}/contactPersons/${id}`] = null;
+    // 2. Delete the Firebase Auth user (ignore not-found — they may already
+    //    have been deleted from the Auth side).
+    await admin
+      .auth()
+      .deleteUser(id)
+      .catch(() => {});
+
+    // 3. Atomic batch: delete person doc + remove their key from each
+    //    house.contactPersons map.
+    const batch = db.batch();
+    batch.delete(personRef(id));
+    for (const hid of linkedHouseIds) {
+      batch.update(houseRef(hid), {
+        [`contactPersons.${id}`]: admin.firestore.FieldValue.delete(),
+      });
     }
-    await admin.database().ref().update(updates);
-
+    await batch.commit();
     res.json({ ok: true });
   } catch (err) {
     next(err);

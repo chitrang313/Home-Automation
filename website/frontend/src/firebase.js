@@ -1,6 +1,19 @@
+/**
+ * Firebase client SDK setup.
+ *
+ *  - auth       Email/password authentication
+ *  - rtdb       Realtime Database — used ONLY for live relay state at
+ *               /devices/{deviceId}/relays/{relayN}
+ *  - firestore  Cloud Firestore — used for everything else (persons, houses,
+ *               rooms, boards, appliances)
+ *
+ * `db` is kept as an alias for `rtdb` so existing files importing { db }
+ * keep working without changes.
+ */
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getDatabase } from 'firebase/database';
+import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -13,5 +26,10 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getDatabase(app);
+
+export const auth      = getAuth(app);
+export const rtdb      = getDatabase(app);
+export const firestore = getFirestore(app);
+
+// Backward-compat alias — existing imports use `db` to mean the RTDB instance.
+export const db = rtdb;

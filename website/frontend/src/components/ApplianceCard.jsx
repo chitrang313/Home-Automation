@@ -1,26 +1,49 @@
 import { useEffect, useState } from 'react';
 import { ref, onValue, set } from 'firebase/database';
-import { db } from '../firebase';
+import { rtdb } from '../firebase';
+import { ApplianceIcon } from '../constants/appliances.jsx';
 
 /**
- * Subscribes to the appliance's relayPath in RTDB and renders a toggle.
- * Props: appliance = { id, name, icon, relayPath }
+ * Subscribes to the appliance's live relay state in RTDB and renders a
+ * toggle. Optional "Edit" pencil opens the rename / icon modal.
+ *
+ * Props:
+ *   appliance     { id, name, icon, type, boardId, relaySlot, switchType }
+ *   deviceId      String — the device ID of the appliance's board.
+ *                 Required for live state; if omitted the card shows "unlinked".
+ *   onEdit()      Optional — opens the parent's edit modal (rename + icon).
+ *   subtitle      Optional — extra line (e.g. "Ami Kunj › Hall" in search results).
+ *   showRelayPath For debugging / admin — display the raw RTDB path.
  */
-export default function ApplianceCard({ appliance }) {
+export default function ApplianceCard({
+  appliance,
+  deviceId,
+  onEdit,
+  subtitle,
+  showRelayPath = false,
+}) {
   const [state, setState] = useState(null); // null = loading
   const [busy, setBusy] = useState(false);
 
+  // Compose the RTDB path. Without a deviceId or relaySlot the card is "unlinked".
+  const relayPath =
+    deviceId && appliance.relaySlot
+      ? `devices/${deviceId}/relays/${appliance.relaySlot}`
+      : null;
+
+  // ─── Subscribe to live relay state ─────────────────────────────────────
   useEffect(() => {
-    if (!appliance.relayPath) return;
-    const r = ref(db, appliance.relayPath);
+    if (!relayPath) { setState(null); return; }
+    const r = ref(rtdb, relayPath);
     const unsub = onValue(r, (snap) => setState(!!snap.val()));
     return () => unsub();
-  }, [appliance.relayPath]);
+  }, [relayPath]);
 
   const onToggle = async () => {
+    if (!relayPath) return;
     setBusy(true);
     try {
-      await set(ref(db, appliance.relayPath), !state);
+      await set(ref(rtdb, relayPath), !state);
     } catch (e) {
       alert('Failed to toggle: ' + e.message);
     } finally {
@@ -29,81 +52,90 @@ export default function ApplianceCard({ appliance }) {
   };
 
   const isOn = state === true;
+  const unlinked = !relayPath;
+
   return (
-    <div className="card flex items-center justify-between gap-3 sm:gap-4">
+    <div
+      className={
+        'card flex items-center justify-between gap-3 sm:gap-4 transition ' +
+        (isOn ? 'ring-1 ring-success/30' : '')
+      }
+    >
+      {/* ─── Left: icon + identity ──────────────────────────────────── */}
       <div className="flex items-center gap-3 min-w-0 flex-1">
-        <ApplianceIcon kind={appliance.icon} on={isOn} />
-        <div className="min-w-0 flex-1">
-          <div className="font-medium truncate">{appliance.name}</div>
-          <div className="text-[10px] sm:text-xs text-ink/50 font-mono truncate">
-            {appliance.relayPath}
-          </div>
+        <div
+          className={
+            'shrink-0 w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center transition ' +
+            (isOn ? 'bg-success/10' : 'bg-slate1')
+          }
+        >
+          <ApplianceIcon kind={appliance.icon || appliance.type} on={isOn} className="w-6 h-6 sm:w-7 sm:h-7" />
+        </div>
+        <div className="min-w-0">
+          <div className="font-medium truncate text-sm sm:text-base">{appliance.name}</div>
+          {subtitle ? (
+            <div className="text-[11px] sm:text-xs text-ink/55 truncate mt-0.5">{subtitle}</div>
+          ) : (
+            <div className="text-[11px] sm:text-xs text-ink/50 truncate mt-0.5">
+              {unlinked
+                ? 'Not assigned to a board yet'
+                : `${appliance.relaySlot?.toUpperCase()} • ${labelForSwitch(appliance.switchType)}`}
+            </div>
+          )}
+          {showRelayPath && relayPath && (
+            <div className="text-[10px] text-ink/40 font-mono truncate mt-0.5">{relayPath}</div>
+          )}
         </div>
       </div>
-      {/* Toggle — bigger on mobile (16x9 px) for thumb taps, classic 14x8 on desktop */}
-      <button
-        onClick={onToggle}
-        disabled={busy || state === null}
-        aria-pressed={isOn}
-        aria-label={`Toggle ${appliance.name}`}
-        className={
-          'relative shrink-0 w-16 h-9 sm:w-14 sm:h-8 rounded-full transition-colors duration-150 ' +
-          (isOn ? 'bg-success' : 'bg-slate3') +
-          ' disabled:opacity-50 active:scale-[0.97]'
-        }
-      >
-        <span
+
+      {/* ─── Right: edit + toggle ───────────────────────────────────── */}
+      <div className="flex items-center gap-2 shrink-0">
+        {onEdit && (
+          <button
+            type="button"
+            onClick={onEdit}
+            aria-label={`Edit ${appliance.name}`}
+            className="w-9 h-9 rounded-full hover:bg-slate1 text-ink/50 hover:text-ink transition flex items-center justify-center"
+          >
+            <EditIcon className="w-4 h-4" />
+          </button>
+        )}
+        <button
+          onClick={onToggle}
+          disabled={busy || state === null || unlinked}
+          aria-pressed={isOn}
+          aria-label={`Toggle ${appliance.name}`}
           className={
-            'absolute top-1 h-7 w-7 sm:h-6 sm:w-6 rounded-full bg-white shadow transition-all duration-150 ' +
-            (isOn ? 'left-8 sm:left-7' : 'left-1')
+            'relative w-14 h-8 rounded-full transition-colors duration-150 ' +
+            (isOn ? 'bg-success' : 'bg-slate3') +
+            ' disabled:opacity-40 disabled:cursor-not-allowed'
           }
-        />
-      </button>
+        >
+          <span
+            className={
+              'absolute top-1 h-6 w-6 rounded-full bg-white shadow transition-all duration-150 ' +
+              (isOn ? 'left-7' : 'left-1')
+            }
+          />
+        </button>
+      </div>
     </div>
   );
 }
 
-/** Minimal inline-SVG icons (no external lib). */
-function ApplianceIcon({ kind, on }) {
-  const color = on ? 'text-success' : 'text-ink/40';
-  const common = 'w-6 h-6 ' + color;
-  switch (kind) {
-    case 'fan':
-      return (
-        <svg viewBox="0 0 24 24" fill="none" className={common} stroke="currentColor" strokeWidth="1.8">
-          <circle cx="12" cy="12" r="2" />
-          <path d="M12 10c0-3 1-6 4-6s4 4 1 7" />
-          <path d="M14 12c3 0 6 1 6 4s-4 4-7 1" />
-          <path d="M12 14c0 3-1 6-4 6s-4-4-1-7" />
-          <path d="M10 12c-3 0-6-1-6-4s4-4 7-1" />
-        </svg>
-      );
-    case 'tv':
-      return (
-        <svg viewBox="0 0 24 24" fill="none" className={common} stroke="currentColor" strokeWidth="1.8">
-          <rect x="3" y="5" width="18" height="12" rx="2" />
-          <path d="M8 21h8M12 17v4" />
-        </svg>
-      );
-    case 'plug':
-      return (
-        <svg viewBox="0 0 24 24" fill="none" className={common} stroke="currentColor" strokeWidth="1.8">
-          <path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0V8zM12 18v4" />
-        </svg>
-      );
-    case 'ac':
-      return (
-        <svg viewBox="0 0 24 24" fill="none" className={common} stroke="currentColor" strokeWidth="1.8">
-          <rect x="3" y="5" width="18" height="8" rx="2" />
-          <path d="M7 17l-1 3M12 17l-1 3M17 17l-1 3" />
-        </svg>
-      );
-    case 'bulb':
-    default:
-      return (
-        <svg viewBox="0 0 24 24" fill="none" className={common} stroke="currentColor" strokeWidth="1.8">
-          <path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1 1 1.7V17h5v-1.4c0-.7.4-1.3 1-1.7A6 6 0 0 0 12 3z" />
-        </svg>
-      );
+function labelForSwitch(switchType) {
+  switch (switchType) {
+    case 'click': return 'Click Switch';
+    case 'none':  return 'App Only';
+    case 'touch':
+    default:      return 'Touch Switch';
   }
+}
+
+function EditIcon({ className }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={className}>
+      <path d="M4 20h4l11-11-4-4L4 16v4z" strokeLinejoin="round" />
+    </svg>
+  );
 }
