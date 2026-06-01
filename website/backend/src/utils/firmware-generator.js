@@ -388,18 +388,19 @@ function formatTimestamp(d) {
 }
 
 /**
- * Build a download filename in the form:
+ * Build a download path where the folder and the file share the same name:
  *
- *     {HouseName}/{HouseName}_{RoomName}.ino
+ *     {HouseName}_{RoomName}/{HouseName}_{RoomName}.ino
  *
- * e.g. "GaneshKrupa/GaneshKrupa_Hall.ino" — the leading segment is a folder
- * so a household's firmware files group together in Downloads.
+ * e.g. "GaneshKrupa_Hall/GaneshKrupa_Hall.ino" — Arduino IDE requires a
+ * sketch's .ino to live in a folder of the same name, so this drops straight
+ * into the IDE without renaming.
  *
  * Caveats the caller should be aware of:
  *   - Browsers sanitise the `download` attribute and most STRIP path
  *     separators for security (Chrome turns "a/b" into "a_b"), so the
- *     subfolder may not actually be created on every browser — but the
- *     house+room are always preserved in the name.
+ *     subfolder may not materialise on every browser — but the house+room
+ *     are always preserved in the name.
  *   - If a room ever holds more than one ESP32 board, both downloads share
  *     this name and would overwrite each other. We append a short board
  *     suffix ONLY in that case (passed via opts.disambiguate) to stay safe
@@ -414,12 +415,13 @@ function buildFilename(house, room, board, opts = {}) {
   const slug = (s) => String(s || '').replace(/[^A-Za-z0-9]+/g, '');
   const h = slug(house.name) || 'House';
   const r = slug(room.name) || 'Room';
-  const base = `${h}/${h}_${r}`;
+  let stem = `${h}_${r}`;
   if (opts.disambiguate) {
     const b = slug(board.label) || 'Board';
-    return `${base}_${b}.ino`;
+    stem = `${stem}_${b}`;
   }
-  return `${base}.ino`;
+  // Folder name === file stem (Arduino sketch-folder convention).
+  return `${stem}/${stem}.ino`;
 }
 
 module.exports = { generateIno, buildFilename, RELAY_PINS, SWITCH_PINS };
