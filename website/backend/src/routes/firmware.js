@@ -140,11 +140,24 @@ router.get(
       );
 
       // ─── Send as a downloadable file ──────────────────────────────────
-      const filename = buildFilename(house, room, board);
+      // Name it "{House}/{House}_{Room}.ino". Only when the room holds more
+      // than one board do we append the board label, so two boards in the
+      // same room can't silently overwrite each other on download.
+      const roomBoardCount = await roomRef(houseId, roomId)
+        .collection('boards')
+        .get()
+        .then((s) => s.size);
+      const filename = buildFilename(house, room, board, {
+        disambiguate: roomBoardCount > 1,
+      });
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      // RFC 5987 / 6266: provide both a sanitised ASCII fallback and the
+      // UTF-8 path form. Browsers that honour subfolders use filename*;
+      // the rest fall back to the flattened ASCII name.
+      const asciiFallback = filename.replace(/\//g, '_');
       res.setHeader(
         'Content-Disposition',
-        `attachment; filename="${filename}"`
+        `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
       );
       res.send(source);
     } catch (err) {

@@ -55,10 +55,23 @@ export default function ApplianceCard({
       : null;
 
   // ─── Subscribe to live relay state ─────────────────────────────────────
+  // onValue fires immediately with null for a path that doesn't exist yet
+  // (so a freshly-seeded board resolves to OFF). The error callback is the
+  // important part: if the read is denied or the network blips, the success
+  // callback never fires and `state` would otherwise stay null forever —
+  // which permanently disables the toggle. Resolving to `false` on error
+  // keeps the control usable (the next successful read corrects it).
   useEffect(() => {
     if (!relayPath) { setState(null); return; }
     const r = ref(rtdb, relayPath);
-    const unsub = onValue(r, (snap) => setState(!!snap.val()));
+    const unsub = onValue(
+      r,
+      (snap) => setState(!!snap.val()),
+      (err) => {
+        console.warn('relay state read failed for', relayPath, err?.message);
+        setState(false);
+      }
+    );
     return () => unsub();
   }, [relayPath]);
 

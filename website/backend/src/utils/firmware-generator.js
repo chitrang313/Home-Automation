@@ -387,13 +387,39 @@ function formatTimestamp(d) {
   return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}, ${h12}:${mm} ${ampm}`;
 }
 
-/** Build a safe download filename like "AmiKunj_Hall_Board1.ino". */
-function buildFilename(house, room, board) {
+/**
+ * Build a download filename in the form:
+ *
+ *     {HouseName}/{HouseName}_{RoomName}.ino
+ *
+ * e.g. "GaneshKrupa/GaneshKrupa_Hall.ino" — the leading segment is a folder
+ * so a household's firmware files group together in Downloads.
+ *
+ * Caveats the caller should be aware of:
+ *   - Browsers sanitise the `download` attribute and most STRIP path
+ *     separators for security (Chrome turns "a/b" into "a_b"), so the
+ *     subfolder may not actually be created on every browser — but the
+ *     house+room are always preserved in the name.
+ *   - If a room ever holds more than one ESP32 board, both downloads share
+ *     this name and would overwrite each other. We append a short board
+ *     suffix ONLY in that case (passed via opts.disambiguate) to stay safe
+ *     while keeping single-board names clean.
+ *
+ * @param {object} house  { name }
+ * @param {object} room   { name }
+ * @param {object} board  { label }
+ * @param {object} [opts] { disambiguate?: boolean } — append board label
+ */
+function buildFilename(house, room, board, opts = {}) {
   const slug = (s) => String(s || '').replace(/[^A-Za-z0-9]+/g, '');
   const h = slug(house.name) || 'House';
   const r = slug(room.name) || 'Room';
-  const b = slug(board.label) || 'Board';
-  return `${h}_${r}_${b}.ino`;
+  const base = `${h}/${h}_${r}`;
+  if (opts.disambiguate) {
+    const b = slug(board.label) || 'Board';
+    return `${base}_${b}.ino`;
+  }
+  return `${base}.ino`;
 }
 
 module.exports = { generateIno, buildFilename, RELAY_PINS, SWITCH_PINS };

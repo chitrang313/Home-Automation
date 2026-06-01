@@ -138,10 +138,18 @@ export const api = {
       { raw: true }
     );
     const blob = await res.blob();
-    // Pull the filename from Content-Disposition if present.
+    // Pull the filename from Content-Disposition. Prefer the RFC 5987
+    // `filename*=UTF-8''…` form (carries the "{House}/{House}_{Room}.ino"
+    // path), falling back to the plain ASCII `filename="…"`.
     const dispo = res.headers.get('Content-Disposition') || '';
-    const match = /filename="?([^"]+)"?/i.exec(dispo);
-    const filename = match ? match[1] : 'firmware.ino';
+    const star = /filename\*=UTF-8''([^;]+)/i.exec(dispo);
+    const plain = /filename="?([^";]+)"?/i.exec(dispo);
+    let filename = 'firmware.ino';
+    if (star) {
+      try { filename = decodeURIComponent(star[1]); } catch { filename = star[1]; }
+    } else if (plain) {
+      filename = plain[1];
+    }
     return { blob, filename };
   },
 };
