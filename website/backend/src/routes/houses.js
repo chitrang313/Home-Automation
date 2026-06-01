@@ -542,6 +542,84 @@ router.delete(
   }
 );
 
+/**
+ * PATCH /api/houses/:houseId/rooms/:roomId/boards/:boardId/slot-order
+ *
+ * Atomically permute which appliance sits on which relay slot of a board —
+ * used by the drag-to-rearrange UI in the Advanced board view.
+ *
+ * Body: { order: [applianceId, ...] }
+ *   `order` must be a permutation of exactly the appliances currently
+ *   assigned to a slot on this board. The i-th appliance in `order` is moved
+ *   to relay(i+1), i.e. the appliances are compacted into relay1..relayK in
+ *   the given order (any leftover slots stay empty) — the same convention the
+ *   auto-assigner uses.
+ *
+ * Doing it in a single Firestore batch avoids the transient slot-collision
+ * that sequential PATCHes would hit mid-permutation. Admin-only (it changes
+ * the physical wiring contract → flags firmwareNeedsUpdate).
+ */
+router.patch(
+  '/:houseId/rooms/:roomId/boards/:boardId/slot-order',
+  verifyAuth,
+  requireAdmin,
+  async (req, res, next) => {
+    try {
+      const { houseId, roomId, boardId } = req.params;
+      const { order } = req.body || {};
+      if (!Array.isArray(order) || order.length === 0) {
+        return res.status(400).json({ error: 'order must be a non-empty array of appliance ids' });
+      }
+
+      const boardSnap = await boardRef(houseId, roomId, boardId).get();
+      if (!boardSnap.exists) return res.status(404).json({ error: 'Board not found' });
+
+      // Appliances currently on this board WITH a slot.
+      const snap = await roomRef(houseId, roomId)
+        .collection('appliances')
+        .where('boardId', '==', boardId)
+        .get();
+      const placed = snap.docs
+        .map((d) => ({ id: d.id, ref: d.ref, relaySlot: d.data().relaySlot }))
+        .filter((a) => a.relaySlot);
+
+      const occupiedSlots = placed
+        .map((a) => a.relaySlot)
+        .filter((s) => slotsForBoard(boardSnap.data()).includes(s))
+        .sort();
+
+      // `order` must be exactly the set of placed appliance ids (a permutation).
+      const placedIds = new Set(placed.map((a) => a.id));
+      const sameSize = order.length === occupiedSlots.length && order.length === placedIds.size;
+      const isPermutation =
+        sameSize &&
+        new Set(order).size === order.length &&
+        order.every((id) => placedIds.has(id));
+      if (!isPermutation) {
+        return res.status(400).json({
+          error: 'order must be a permutation of the appliances currently placed on this board',
+        });
+      }
+
+      // Compact order[i] → relay(i+1) in one batch (no transient collision).
+      const targetSlots = slotsForBoard(boardSnap.data());
+      const refById = Object.fromEntries(placed.map((a) => [a.id, a.ref]));
+      const batch = admin.firestore().batch();
+      order.forEach((id, i) => {
+        batch.update(refById[id], { relaySlot: targetSlots[i] });
+      });
+      await batch.commit();
+
+      // Wiring changed → board needs a re-flash.
+      await reconcileBoard(houseId, roomId, boardId, { forceFirmwareUpdate: true });
+
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // ═══════════════════════════════════════════════════════════════════════════
 //   ORPHAN RECOVERY
 // ═══════════════════════════════════════════════════════════════════════════

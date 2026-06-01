@@ -96,6 +96,16 @@ export const api = {
   addBoard:    (hid, rid, body = {}) => request(`/houses/${hid}/rooms/${rid}/boards`, { method: 'POST', body }),
   updateBoard: (hid, rid, bid, body) => request(`/houses/${hid}/rooms/${rid}/boards/${bid}`, { method: 'PATCH', body }),
   deleteBoard: (hid, rid, bid)       => request(`/houses/${hid}/rooms/${rid}/boards/${bid}`, { method: 'DELETE' }),
+  /**
+   * Atomically permute appliance↔relay-slot assignment on a board.
+   * orderedIds = appliance IDs in the new top→bottom order (must be exactly
+   * the appliances currently occupying a slot on this board).
+   */
+  reorderBoardSlots: (hid, rid, bid, orderedIds) =>
+    request(`/houses/${hid}/rooms/${rid}/boards/${bid}/slot-order`, {
+      method: 'PATCH',
+      body: { order: orderedIds },
+    }),
 
   // ─── Appliances ───────────────────────────────────────────────────────
   listAppliances:  (hid, rid)             => request(`/houses/${hid}/rooms/${rid}/appliances`),
@@ -130,12 +140,13 @@ export const api = {
   // ─── Firmware download ────────────────────────────────────────────────
   /**
    * Downloads the generated .ino as a Blob. Returns { blob, filename }.
-   * Pass Wi-Fi SSID + password (entered at download time in the UI).
+   * Wi-Fi + Firebase credentials are POSTed in the body (never the URL) so
+   * they don't leak into browser history or server access logs.
    */
-  async downloadFirmware(hid, rid, bid, { ssid, pass }) {
+  async downloadFirmware(hid, rid, bid, { ssid, pass, userEmail, userPassword }) {
     const res = await request(
-      `/houses/${hid}/rooms/${rid}/boards/${bid}/firmware${qs({ ssid, pass })}`,
-      { raw: true }
+      `/houses/${hid}/rooms/${rid}/boards/${bid}/firmware`,
+      { method: 'POST', body: { ssid, pass, userEmail, userPassword }, raw: true }
     );
     const blob = await res.blob();
     // Pull the filename from Content-Disposition. Prefer the RFC 5987

@@ -41,6 +41,11 @@ app.use(
       if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
       callback(new Error(`CORS: origin "${origin}" not allowed`));
     },
+    // Content-Disposition is not a CORS-safelisted response header, so the
+    // browser hides it from fetch() unless we explicitly expose it. Without
+    // this the firmware download can't read its filename and falls back to
+    // the generic "firmware.ino".
+    exposedHeaders: ['Content-Disposition'],
   })
 );
 app.use(express.json({ limit: '256kb' }));

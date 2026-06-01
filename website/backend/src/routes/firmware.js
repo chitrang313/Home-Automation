@@ -41,35 +41,49 @@ const router = express.Router({ mergeParams: true });
 /**
  * Returns the Firebase config the generated .ino needs to authenticate.
  *
- * Reads from env vars set in the backend deployment so credentials never
- * live in the repo or the frontend bundle.
+ * apiKey + databaseUrl come from backend env (never the repo / frontend
+ * bundle). The device login (USER_EMAIL / USER_PASSWORD the ESP32 signs in
+ * with) is chosen at download time:
  *
- *   FIREBASE_WEB_API_KEY         — public Web API key (same as VITE_FIREBASE_API_KEY)
- *   DATABASE_URL                 — RTDB URL (already set for admin SDK)
- *   ESP32_DEVICE_EMAIL           — dedicated Firebase Auth account for ESP32 boards
- *   ESP32_DEVICE_PASSWORD        — its password
+ *   - If the caller supplies userEmail + userPassword (entered in the
+ *     download dialog — typically the logged-in user's own Firebase
+ *     account), those are embedded.
+ *   - Otherwise we fall back to a dedicated device service account from
+ *     env (ESP32_DEVICE_EMAIL / ESP32_DEVICE_PASSWORD), if configured.
+ *
+ * The supplied password is used only to template this one file in memory —
+ * it is never stored in Firestore/RTDB and never logged.
  */
-function getFirebaseConfigForFirmware() {
+function getFirebaseConfigForFirmware({ userEmail, userPassword } = {}) {
   return {
     apiKey:       process.env.FIREBASE_WEB_API_KEY || '',
     databaseUrl:  process.env.DATABASE_URL         || '',
-    userEmail:    process.env.ESP32_DEVICE_EMAIL   || '',
-    userPassword: process.env.ESP32_DEVICE_PASSWORD || '',
+    userEmail:    userEmail    || process.env.ESP32_DEVICE_EMAIL    || '',
+    userPassword: userPassword || process.env.ESP32_DEVICE_PASSWORD || '',
   };
 }
 
-router.get(
+/**
+ * POST so Wi-Fi + Firebase credentials travel in the request body, never in
+ * the URL (which would land in browser history and server access logs).
+ *
+ * Body: { ssid, pass, userEmail?, userPassword? }
+ *   - ssid / pass         Wi-Fi network + password to embed
+ *   - userEmail/Password  Firebase account the ESP32 signs in as (optional;
+ *                         falls back to the env device account)
+ */
+router.post(
   '/:houseId/rooms/:roomId/boards/:boardId/firmware',
   verifyAuth,
   async (req, res, next) => {
     try {
       const { houseId, roomId, boardId } = req.params;
-      const { ssid, pass } = req.query;
+      const { ssid, pass, userEmail, userPassword } = req.body || {};
 
       if (!ssid || !pass) {
         return res
           .status(400)
-          .json({ error: 'ssid and pass query params are required' });
+          .json({ error: 'ssid and pass are required' });
       }
       if (!(await canAccessHouse(req, houseId))) {
         return res.status(403).json({ error: 'Forbidden' });
@@ -115,7 +129,7 @@ router.get(
         persons,
         appliances,
         wifi: { ssid, password: pass },
-        firebase: getFirebaseConfigForFirmware(),
+        firebase: getFirebaseConfigForFirmware({ userEmail, userPassword }),
       });
 
       // ─── Seed RTDB relay state (idempotent) ───────────────────────────

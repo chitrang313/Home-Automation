@@ -1,42 +1,69 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  verticalListSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { api } from '../services/api';
 import DownloadFirmwareModal from './DownloadFirmwareModal';
 import EditApplianceModal from './EditApplianceModal';
-import { getApplianceType } from '../constants/appliances.jsx';
+import {
+  getApplianceType,
+  RELAY_SLOTS,
+  relayPinLabel,
+} from '../constants/appliances.jsx';
 
 /**
  * Visual slot editor for one Board.
  *
  *   - Renders 4 or 8 numbered slots based on board.relayCount.
- *   - Each occupied slot shows the appliance's icon + name + switch type chip.
- *   - Each empty slot shows a placeholder.
- *   - "Download Firmware" button at the bottom with update-available badge
- *     and a tooltip showing the last-download date.
+ *   - Each slot shows its firmware pin (RELAYn_PIN · GPIO xx).
+ *   - Occupied slots are drag-rearrangeable: dragging reorders the
+ *     appliances and compacts them into relay1..relayK in the new order
+ *     (persisted atomically via api.reorderBoardSlots). This rewires which
+ *     GPIO each appliance uses, so the board is flagged for a re-flash.
+ *   - "Download Firmware" button with update-available badge.
  *
  * Admin-only — used inside Admin Dashboard room editors.
- *
- * Props:
- *   houseId, roomId
- *   board           { id, label, deviceId, relayCount, lastDownloadAt, firmwareNeedsUpdate }
- *   appliances      every appliance whose boardId === board.id
- *   onChange()      refresh callback (called after any mutation)
- *   onDelete()      optional — admin deletes the board
  */
 export default function BoardCard({ houseId, roomId, board, appliances = [], onChange, onDelete }) {
   const [dlOpen, setDlOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
-  // Sort appliances by relaySlot index so the visual order matches the firmware.
-  const bySlot = useMemo(() => {
-    const m = {};
-    for (const a of appliances) if (a.relaySlot) m[a.relaySlot] = a;
-    return m;
-  }, [appliances]);
-
   const totalSlots = (board.relayCount || 4) >= 8 ? 8 : 4;
-  const slots = Array.from({ length: totalSlots }, (_, i) => `relay${i + 1}`);
+  const targetSlots = RELAY_SLOTS.slice(0, totalSlots);
+
+  // Appliances WITH a slot, in current slot order — these are draggable.
+  const placed = useMemo(() => {
+    return appliances
+      .filter((a) => a.relaySlot && targetSlots.includes(a.relaySlot))
+      .sort((a, b) => RELAY_SLOTS.indexOf(a.relaySlot) - RELAY_SLOTS.indexOf(b.relaySlot));
+  }, [appliances, totalSlots]);
+
+  // Local mirror so the drop settles before the parent refetch reorders DOM.
+  const [items, setItems] = useState(placed);
+  useEffect(() => { setItems(placed); }, [placed]);
+
   const usedCount = appliances.length;
   const editing = editingId ? appliances.find((a) => a.id === editingId) : null;
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   // For slot collision detection in the edit modal.
   const occupiedSlots = useMemo(() => {
@@ -59,6 +86,29 @@ export default function BoardCard({ houseId, roomId, board, appliances = [], onC
     onDelete?.();
   };
 
+  const onDragEnd = async (event) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = items.findIndex((a) => a.id === active.id);
+    const newIndex = items.findIndex((a) => a.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+
+    const prev = items;
+    const next = arrayMove(items, oldIndex, newIndex);
+    setItems(next); // optimistic
+    try {
+      await api.reorderBoardSlots(houseId, roomId, board.id, next.map((a) => a.id));
+      await onChange?.();
+    } catch (err) {
+      console.error('slot reorder failed', err);
+      setItems(prev); // rollback
+      alert('Failed to rearrange slots: ' + err.message);
+    }
+  };
+
+  // Trailing empty slots (after the placed appliances are compacted).
+  const emptySlots = targetSlots.slice(items.length);
+
   return (
     <div className="rounded-xl border border-slate2 bg-paper">
       {/* ── Header ─────────────────────────────────────────────────── */}
@@ -79,34 +129,39 @@ export default function BoardCard({ houseId, roomId, board, appliances = [], onC
         )}
       </div>
 
-      {/* ── Slot grid ──────────────────────────────────────────────── */}
-      <ul className="divide-y divide-slate2">
-        {slots.map((slot) => {
-          const a = bySlot[slot];
-          return (
-            <li key={slot} className="flex items-center gap-3 px-4 py-2.5">
-              <span className="font-mono text-[11px] text-ink/45 w-12 shrink-0">{slot.toUpperCase()}</span>
-              {a ? (
-                <button
-                  type="button"
-                  onClick={() => setEditingId(a.id)}
-                  className="flex items-center gap-2 flex-1 min-w-0 text-left hover:bg-slate1/50 rounded-md px-2 py-1 -mx-2 transition"
-                >
-                  <span className="text-base shrink-0" aria-hidden>
-                    {getApplianceType(a.icon || a.type).emoji}
-                  </span>
-                  <span className="truncate text-sm font-medium">{a.name}</span>
-                  <span className="ml-auto text-[10px] text-ink/50 shrink-0 px-1.5 py-0.5 rounded bg-slate1">
-                    {switchTypeShort(a.switchType)}
-                  </span>
-                </button>
-              ) : (
-                <span className="text-xs text-ink/40 italic">empty</span>
-              )}
+      {/* ── Slot list: occupied (draggable) then empty ──────────────── */}
+      <div className="px-2 py-1">
+        {items.length > 1 && (
+          <div className="px-2 pt-2 pb-1 text-[10px] text-ink/40">
+            Drag a row to rearrange which GPIO each appliance uses.
+          </div>
+        )}
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+          <SortableContext items={items.map((a) => a.id)} strategy={verticalListSortingStrategy}>
+            <ul>
+              {items.map((a, idx) => (
+                <SortableSlotRow
+                  key={a.id}
+                  appliance={a}
+                  slot={targetSlots[idx]}
+                  onEdit={() => setEditingId(a.id)}
+                />
+              ))}
+            </ul>
+          </SortableContext>
+        </DndContext>
+
+        {/* Empty slots — static, not draggable */}
+        <ul>
+          {emptySlots.map((slot) => (
+            <li key={slot} className="flex items-center gap-3 px-2 py-2.5 border-t border-slate2/60">
+              <span className="w-5 shrink-0" aria-hidden />
+              <span className="font-mono text-[10px] text-ink/40 w-32 shrink-0">{relayPinLabel(slot)}</span>
+              <span className="text-xs text-ink/40 italic">empty</span>
             </li>
-          );
-        })}
-      </ul>
+          ))}
+        </ul>
+      </div>
 
       {/* ── Footer: firmware download ─────────────────────────────── */}
       <div className="px-4 py-3 border-t border-slate2 flex items-center justify-between gap-3">
@@ -154,6 +209,72 @@ export default function BoardCard({ houseId, roomId, board, appliances = [], onC
         }}
       />
     </div>
+  );
+}
+
+/** One draggable occupied-slot row. */
+function SortableSlotRow({ appliance, slot, onEdit }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: appliance.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 20 : 'auto',
+  };
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={
+        'flex items-center gap-3 px-2 py-2.5 border-t border-slate2/60 bg-paper ' +
+        (isDragging ? 'shadow-md rounded-lg ring-1 ring-accent/30' : '')
+      }
+    >
+      <button
+        type="button"
+        aria-label="Drag to rearrange"
+        {...attributes}
+        {...listeners}
+        className="shrink-0 w-5 flex items-center justify-center text-ink/30 hover:text-ink/70 cursor-grab active:cursor-grabbing touch-none"
+      >
+        <DragDots className="w-4 h-4" />
+      </button>
+      <span className="font-mono text-[10px] text-ink/55 w-32 shrink-0">{relayPinLabel(slot)}</span>
+      <button
+        type="button"
+        onClick={onEdit}
+        className="flex items-center gap-2 flex-1 min-w-0 text-left hover:bg-slate1/50 rounded-md px-2 py-1 -mx-1 transition"
+      >
+        <span className="text-base shrink-0" aria-hidden>
+          {getApplianceType(appliance.icon || appliance.type).emoji}
+        </span>
+        <span className="truncate text-sm font-medium">{appliance.name}</span>
+        <span className="ml-auto text-[10px] text-ink/50 shrink-0 px-1.5 py-0.5 rounded bg-slate1">
+          {switchTypeShort(appliance.switchType)}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+function DragDots({ className }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+      <circle cx="9" cy="6" r="1.5" />
+      <circle cx="15" cy="6" r="1.5" />
+      <circle cx="9" cy="12" r="1.5" />
+      <circle cx="15" cy="12" r="1.5" />
+      <circle cx="9" cy="18" r="1.5" />
+      <circle cx="15" cy="18" r="1.5" />
+    </svg>
   );
 }
 

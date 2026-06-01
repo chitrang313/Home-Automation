@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Modal from './Modal';
 import { api } from '../services/api';
+import { auth } from '../firebase';
 import { getApplianceType } from '../constants/appliances.jsx';
 
 /**
@@ -29,13 +30,31 @@ export default function DownloadFirmwareModal({
   const [ssid, setSsid] = useState('');
   const [pass, setPass] = useState('');
   const [showPass, setShowPass] = useState(false);
+  // Firebase account the ESP32 signs in as. Email defaults to the logged-in
+  // user; the password is entered fresh here (never stored anywhere).
+  const [fbEmail, setFbEmail] = useState('');
+  const [fbPass, setFbPass] = useState('');
+  const [showFbPass, setShowFbPass] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+
+  // Prefill the Firebase email with the currently-logged-in user each time
+  // the dialog opens; clear the password so it's never lingering in memory.
+  useEffect(() => {
+    if (open) {
+      setFbEmail(auth.currentUser?.email || '');
+      setFbPass('');
+    }
+  }, [open]);
 
   const onSubmit = async (e) => {
     e.preventDefault();
     if (!ssid.trim() || !pass) {
       setErr('Both Wi-Fi name and password are required.');
+      return;
+    }
+    if (!fbEmail.trim() || !fbPass) {
+      setErr('Firebase account email and password are required (the ESP32 signs in with these).');
       return;
     }
     setBusy(true);
@@ -44,6 +63,8 @@ export default function DownloadFirmwareModal({
       const { blob, filename } = await api.downloadFirmware(houseId, roomId, board.id, {
         ssid: ssid.trim(),
         pass,
+        userEmail: fbEmail.trim(),
+        userPassword: fbPass,
       });
       // Trigger browser download
       const url = URL.createObjectURL(blob);
@@ -122,6 +143,48 @@ export default function DownloadFirmwareModal({
                 tabIndex={-1}
               >
                 {showPass ? 'Hide' : 'Show'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* ─── Firebase device login ──────────────────────────────────── */}
+        <div className="grid grid-cols-1 gap-3">
+          <div>
+            <label className="label" htmlFor="fb-email">Firebase account email</label>
+            <input
+              id="fb-email"
+              className="input"
+              type="email"
+              value={fbEmail}
+              onChange={(e) => setFbEmail(e.target.value)}
+              placeholder="you@example.com"
+              autoComplete="off"
+            />
+            <p className="text-[11px] text-ink/50 mt-1">
+              The ESP32 signs in to Firebase with this account. Defaults to your
+              login — you can use any valid account that has access.
+            </p>
+          </div>
+          <div>
+            <label className="label" htmlFor="fb-pass">Firebase account password</label>
+            <div className="relative">
+              <input
+                id="fb-pass"
+                className="input pr-12"
+                type={showFbPass ? 'text' : 'password'}
+                value={fbPass}
+                onChange={(e) => setFbPass(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowFbPass((v) => !v)}
+                className="absolute inset-y-0 right-0 px-3 text-xs text-ink/60 hover:text-ink"
+                tabIndex={-1}
+              >
+                {showFbPass ? 'Hide' : 'Show'}
               </button>
             </div>
           </div>

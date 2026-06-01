@@ -181,3 +181,26 @@ export const RELAY_SLOTS = [
   'relay1', 'relay2', 'relay3', 'relay4',
   'relay5', 'relay6', 'relay7', 'relay8',
 ];
+
+/**
+ * Relay + switch GPIO pins — MUST mirror backend
+ * website/backend/src/utils/firmware-generator.js (RELAY_PINS / SWITCH_PINS).
+ * Used only for display in the Advanced board view so the admin can see which
+ * ESP32 pin each slot maps to in the generated firmware.
+ */
+export const RELAY_GPIO = {
+  relay1: 23, relay2: 19, relay3: 18, relay4: 5,
+  relay5: 25, relay6: 26, relay7: 32, relay8: 33,
+};
+export const SWITCH_GPIO = {
+  relay1: 13, relay2: 12, relay3: 14, relay4: 27,
+  relay5: 4,  relay6: 15, relay7: 16, relay8: 17,
+};
+
+/** "RELAY1_PIN · GPIO 23" style label for a slot. */
+export function relayPinLabel(slot) {
+  const n = RELAY_SLOTS.indexOf(slot) + 1;
+  const gpio = RELAY_GPIO[slot];
+  if (!n || gpio === undefined) return '';
+  return `RELAY${n}_PIN · GPIO ${gpio}`;
+}
