@@ -40,6 +40,26 @@ export default function Combobox({
   const containerRef = useRef(null);
   const inputRef = useRef(null);
 
+  // Touch / coarse-pointer devices: a real text input would summon the
+  // on-screen keyboard the moment it's focused. These lists are short and
+  // meant to be tapped, so on such devices we make the field read-only —
+  // tapping still opens the dropdown to pick, but no keyboard appears.
+  // Desktop (fine pointer) keeps full type-to-filter behaviour.
+  const [isCoarse, setIsCoarse] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(pointer: coarse)');
+    const apply = () => setIsCoarse(mq.matches);
+    apply();
+    // addEventListener('change') is the modern API; fall back for older WebKit.
+    if (mq.addEventListener) mq.addEventListener('change', apply);
+    else mq.addListener(apply);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', apply);
+      else mq.removeListener(apply);
+    };
+  }, []);
+
   // Compute the visible label for the current selection so the input
   // shows the chosen item's text instead of the raw key.
   const selectedLabel = useMemo(() => {
@@ -72,7 +92,11 @@ export default function Combobox({
       }
     };
     document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+    };
   }, [open]);
 
   const choose = (opt) => {
@@ -117,13 +141,29 @@ export default function Combobox({
           value={displayValue}
           placeholder={placeholder}
           disabled={disabled}
+          // On touch devices the field is read-only (no keyboard); the
+          // wrapper's onClick still toggles the list open/closed.
+          readOnly={isCoarse}
+          inputMode={isCoarse ? 'none' : undefined}
           onChange={(e) => {
+            if (isCoarse) return; // can't type on touch — ignore
             setQuery(e.target.value);
             if (!open) setOpen(true);
           }}
-          onFocus={() => setOpen(true)}
+          // Touch: a single mousedown handler toggles the list and
+          // preventDefault stops focus (so the keyboard never appears).
+          // Desktop: focus opens it and typing filters as before.
+          onMouseDown={(e) => {
+            if (!isCoarse) return;
+            e.preventDefault();
+            setOpen((v) => !v);
+          }}
+          onFocus={() => { if (!isCoarse) setOpen(true); }}
           onKeyDown={onKeyDown}
-          className="flex-1 min-w-0 bg-transparent outline-none text-sm text-ink placeholder:text-ink/40"
+          className={
+            'flex-1 min-w-0 bg-transparent outline-none text-sm text-ink placeholder:text-ink/40 ' +
+            (isCoarse ? 'cursor-pointer' : '')
+          }
           aria-expanded={open}
           aria-haspopup="listbox"
           autoComplete="off"
