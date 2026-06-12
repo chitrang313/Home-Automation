@@ -86,6 +86,21 @@ router.post(
           .status(400)
           .json({ error: 'ssid and pass are required' });
       }
+
+      // Refuse to generate firmware with missing Firebase credentials. A
+      // board flashed with empty USER_EMAIL/USER_PASSWORD retries sign-in
+      // forever and gets the account rate-limited (auth/too-many-requests).
+      const fbConfig = getFirebaseConfigForFirmware({ userEmail, userPassword });
+      if (!fbConfig.apiKey || !fbConfig.databaseUrl) {
+        return res.status(500).json({
+          error: 'Server is missing FIREBASE_WEB_API_KEY / DATABASE_URL — contact the administrator.',
+        });
+      }
+      if (!fbConfig.userEmail || !fbConfig.userPassword) {
+        return res.status(400).json({
+          error: 'Firebase account email and password are required — the ESP32 signs in with them.',
+        });
+      }
       if (!(await canAccessHouse(req, houseId))) {
         return res.status(403).json({ error: 'Forbidden' });
       }
@@ -130,7 +145,7 @@ router.post(
         persons,
         appliances,
         wifi: { ssid, password: pass },
-        firebase: getFirebaseConfigForFirmware({ userEmail, userPassword }),
+        firebase: fbConfig,
       });
 
       // ─── Seed RTDB relay state (idempotent) ───────────────────────────

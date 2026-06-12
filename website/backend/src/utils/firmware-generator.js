@@ -9,18 +9,27 @@
  * Reference implementation (proven in production):
  *   firmware/4DeviceSwitchControl/4DeviceSwitchControl.ino
  *
- * Key behaviours preserved verbatim from the reference:
+ * Key behaviours preserved from the reference:
  *   - Active-LOW relays (digitalWrite LOW = ON)
  *   - 150 ms debounce window for capacitive touch (TTP223)
  *   -  50 ms debounce window for mechanical click switches
  *   - FALLING-edge interrupt with millis() debouncing inside ISR
- *   - 500 ms Firebase poll interval for app-driven changes
  *
- * Key generalisations on top of the reference:
- *   - Supports 4-channel AND 8-channel relay boards
- *   - Per-relay switch type (touch / click / none)
- *   - Per-device RTDB paths (/devices/{deviceId}/relays/relayN)
- *   - Skips ISR setup entirely for "app-only" relays (switchType=none)
+ * Production hardening on top of the reference:
+ *   - RTDB STREAM instead of 500 ms polling — dashboard toggles apply
+ *     instantly, idle traffic drops from ~7k req/hour to a held socket,
+ *     and a reconnect snapshot restores relay state after power loss.
+ *   - Bounded auth retries + token status callback — wrong credentials log
+ *     a clear error and stop, instead of hammering Firebase Auth until the
+ *     account is locked (auth/too-many-requests).
+ *   - Wi-Fi boot timeout + runtime watchdog (clean ESP.restart recovery),
+ *     WiFi.setSleep(false) for the GPIO36/39 interrupt errata + latency.
+ *   - Offline-first switches: wall switches always work; unsynced toggles
+ *     are queued (pendingPush) and re-pushed on reconnect so RTDB can't
+ *     revert a real-world switch press.
+ *   - Up to 16 relays, one per safe output GPIO; per-relay switch type
+ *     (touch / click / none); per-device RTDB paths; app-only relays get
+ *     no ISR/interrupt code at all.
  */
 
 // ─── GPIO pin maps ──────────────────────────────────────────────────────────
@@ -102,6 +111,12 @@ function generateIno(ctx) {
     );
   });
 
+  // A board with no wired appliance still gets a valid (idle) sketch.
+  if (usedSlots.length === 0) {
+    return buildHeader(house, room, board, persons, byRelay, usedSlots, generatedAt) +
+      '\n\nvoid setup() {}\nvoid loop() {}\n// No appliances are assigned to this board yet — assign GPIO pins in the dashboard and re-download.\n';
+  }
+
   // ─── Build sections ─────────────────────────────────────────────────────
   const headerBlock      = buildHeader(house, room, board, persons, byRelay, usedSlots, generatedAt);
   const wifiBlock        = buildWifiBlock(wifi);
@@ -109,14 +124,11 @@ function generateIno(ctx) {
   const pinDefinesBlock  = buildPinDefines(usedSlots, byRelay, physicalSlots);
   const rtdbPathsBlock   = buildRtdbPaths(board.deviceId, usedSlots);
   const debounceBlock    = buildDebounceConstants();
-  const fbObjectsBlock   = `// ─── Firebase client objects ─────────────────────────────────────────────
-FirebaseData   fbdo;
-FirebaseAuth   auth;
-FirebaseConfig config;
-`;
+  const fbObjectsBlock   = buildFirebaseObjects();
+  const channelTable     = buildChannelTables(usedSlots, byRelay);
   const isrStateBlock    = buildIsrStateBlock(physicalSlots, usedSlots);
-  const isrFunctionsBlock= buildIsrFunctions(physicalSlots, byRelay);
-  const helpersBlock     = buildHelpers();
+  const isrFunctionsBlock= buildIsrFunctions(physicalSlots, byRelay, usedSlots);
+  const helpersBlock     = buildHelpers(usedSlots);
   const setupBlock       = buildSetup(usedSlots, byRelay, physicalSlots);
   const loopBlock        = buildLoop(usedSlots, byRelay, physicalSlots);
 
@@ -131,6 +143,7 @@ FirebaseConfig config;
     rtdbPathsBlock,
     debounceBlock,
     fbObjectsBlock,
+    channelTable,
     isrStateBlock,
     isrFunctionsBlock,
     helpersBlock,
@@ -237,15 +250,51 @@ function buildRtdbPaths(deviceId, usedSlots) {
     })
     .join('\n');
   return `// ─── RTDB paths (auto-generated, must match the dashboard) ───────────────
+// The device STREAMS the parent node (instant push from the dashboard) and
+// writes individual children when a physical switch toggles a relay.
+#define RTDB_RELAYS_BASE  "/devices/${deviceId}/relays"
 ${lines}
 `;
 }
 
 function buildDebounceConstants() {
-  return `// ─── Debounce timing ─────────────────────────────────────────────────────
-const unsigned long TOUCH_DEBOUNCE_MS = ${TOUCH_DEBOUNCE_MS};   // capacitive TTP223
-const unsigned long CLICK_DEBOUNCE_MS = ${CLICK_DEBOUNCE_MS};    // mechanical button
-const unsigned long FIREBASE_POLL_INTERVAL = 500; // ms — how often we sync from RTDB
+  return `// ─── Timing constants ────────────────────────────────────────────────────
+const unsigned long TOUCH_DEBOUNCE_MS   = ${TOUCH_DEBOUNCE_MS};    // capacitive TTP223
+const unsigned long CLICK_DEBOUNCE_MS   = ${CLICK_DEBOUNCE_MS};     // mechanical button
+const unsigned long WIFI_BOOT_TIMEOUT_MS    = 30000;  // give up + restart if Wi-Fi won't join at boot
+const unsigned long WIFI_LOST_RESTART_MS    = 120000; // restart if Wi-Fi stays down this long at runtime
+const unsigned long PENDING_PUSH_RETRY_MS   = 2000;   // retry interval for unsynced local toggles
+`;
+}
+
+function buildFirebaseObjects() {
+  return `// ─── Firebase client objects ─────────────────────────────────────────────
+// fbdo   — request channel for writes (switch toggles, pending re-syncs)
+// stream — dedicated channel for the RTDB stream (library requirement)
+FirebaseData   fbdo;
+FirebaseData   stream;
+FirebaseAuth   auth;
+FirebaseConfig config;
+`;
+}
+
+function buildChannelTables(usedSlots, byRelay) {
+  const n = usedSlots.length;
+  const pins  = usedSlots.map((s, i) => `RELAY${i + 1}_PIN`).join(', ');
+  const keys  = usedSlots.map((s) => `"${s}"`).join(', ');
+  const paths = usedSlots.map((s, i) => `RTDB_RELAY${i + 1}`).join(', ');
+  const names = usedSlots.map((s) => `"${escapeForC(byRelay[s].name)}"`).join(', ');
+  return `// ─── Channel tables (index i = one relay channel) ─────────────────────────
+#define CH_COUNT ${n}
+const uint8_t CH_PIN[CH_COUNT]   = { ${pins} };
+const char*   CH_KEY[CH_COUNT]   = { ${keys} };   // RTDB child key
+const char*   CH_PATH[CH_COUNT]  = { ${paths} };  // full RTDB path
+const char*   CH_NAME[CH_COUNT]  = { ${names} };
+
+// Set when a local (wall-switch) toggle could not be pushed to RTDB —
+// retried until it succeeds; stream updates for that channel are ignored
+// meanwhile so a reconnect can't silently revert a real-world switch press.
+bool pendingPush[CH_COUNT] = { ${usedSlots.map(() => 'false').join(', ')} };
 `;
 }
 
@@ -253,56 +302,125 @@ function buildIsrStateBlock(physicalSlots, usedSlots) {
   if (!physicalSlots.length) {
     return `// (no ISRs — every relay on this board is app-only)\n`;
   }
-  // We allocate flags for all usedSlots; app-only entries simply never get set.
   return `// ─── Per-channel ISR state (volatile — touched from interrupt context) ───
-volatile bool          switchPending[${usedSlots.length}] = { ${usedSlots.map(() => 'false').join(', ')} };
-volatile unsigned long lastSwitchMs[${usedSlots.length}]  = { ${usedSlots.map(() => '0').join(', ')} };
+volatile bool          switchPending[CH_COUNT] = { ${usedSlots.map(() => 'false').join(', ')} };
+volatile unsigned long lastSwitchMs[CH_COUNT]  = { ${usedSlots.map(() => '0').join(', ')} };
 `;
 }
 
-function buildIsrFunctions(physicalSlots, byRelay) {
+function buildIsrFunctions(physicalSlots, byRelay, usedSlots) {
   if (!physicalSlots.length) return '';
+  // IMPORTANT: the flag index must be the CHANNEL index (position in
+  // usedSlots), not the position among physical switches — otherwise an
+  // app-only relay between two switched ones shifts every flag by one and
+  // the wrong relay toggles.
   return physicalSlots
-    .map((slot, idx) => {
+    .map((slot) => {
       const ap = byRelay[slot];
-      const i = idx; // index into switchPending[] for THIS slot
+      const ch = usedSlots.indexOf(slot);
       const debounceMacro = ap.switchType === 'click'
         ? 'CLICK_DEBOUNCE_MS'
         : 'TOUCH_DEBOUNCE_MS';
-      return `// ${ap.name} — ${ap.switchType === 'click' ? 'Click Switch' : 'Touch Switch'}
-void IRAM_ATTR switch${i + 1}ISR() {
+      return `// ${ap.name} — ${ap.switchType === 'click' ? 'Click Switch' : 'Touch Switch'} (channel ${ch})
+void IRAM_ATTR switch${ch + 1}ISR() {
   unsigned long now = millis();
-  if (now - lastSwitchMs[${i}] > ${debounceMacro}) {
-    switchPending[${i}] = true;
-    lastSwitchMs[${i}]  = now;
+  if (now - lastSwitchMs[${ch}] > ${debounceMacro}) {
+    switchPending[${ch}] = true;
+    lastSwitchMs[${ch}]  = now;
   }
 }`;
     })
     .join('\n\n') + '\n';
 }
 
-function buildHelpers() {
+function buildHelpers(usedSlots) {
   return `
-// Toggle the relay tied to relayPin and push the new state to its RTDB path.
-// Active-LOW wiring: digitalRead LOW means relay is currently ON.
-void toggleRelay(uint8_t relayPin, const char* rtdbPath) {
-  bool currentOn = (digitalRead(relayPin) == LOW);
-  digitalWrite(relayPin, currentOn ? HIGH : LOW);
-  if (Firebase.ready()) {
-    Firebase.RTDB.setBool(&fbdo, rtdbPath, !currentOn);
+// ─── Relay helpers ───────────────────────────────────────────────────────
+// Active-LOW wiring: digitalWrite LOW = relay ON.
+
+void applyRelay(int ch, bool on) {
+  digitalWrite(CH_PIN[ch], on ? LOW : HIGH);
+}
+
+bool relayIsOn(int ch) {
+  return digitalRead(CH_PIN[ch]) == LOW;
+}
+
+// Toggle from a physical switch. The relay reacts INSTANTLY (works fully
+// offline); the new state is then pushed to RTDB. If the push fails the
+// channel is marked pendingPush and retried from loop() until it lands.
+void toggleChannel(int ch) {
+  bool newOn = !relayIsOn(ch);
+  applyRelay(ch, newOn);
+  if (Firebase.ready() && Firebase.RTDB.setBool(&fbdo, CH_PATH[ch], newOn)) {
+    pendingPush[ch] = false;
+  } else {
+    pendingPush[ch] = true;
+    Serial.printf("[sync] %s toggle queued (offline) — will push when online\\n", CH_NAME[ch]);
+  }
+}
+
+// ─── Firebase auth diagnostics ───────────────────────────────────────────
+// Bounded retries + a clear serial message stop the endless sign-in storm
+// that triggers Firebase's auth/too-many-requests lockout when credentials
+// are wrong.
+void onTokenStatus(TokenInfo info) {
+  if (info.status == token_status_error) {
+    Serial.printf("[auth] FAILED (code %d): %s\\n",
+                  info.error.code, info.error.message.c_str());
+    Serial.println("[auth] Check USER_EMAIL / USER_PASSWORD, then re-flash.");
+  } else if (info.status == token_status_ready) {
+    Serial.println("[auth] Firebase sign-in OK.");
+  }
+}
+
+// ─── RTDB stream callbacks ───────────────────────────────────────────────
+// The stream delivers (a) one full JSON snapshot on every (re)connect and
+// (b) tiny per-key updates the instant the dashboard toggles something.
+
+void applyStreamValue(const char* key, bool on) {
+  for (int ch = 0; ch < CH_COUNT; ch++) {
+    if (strcmp(key, CH_KEY[ch]) != 0) continue;
+    if (pendingPush[ch]) return;            // local change is newer — keep it
+    if (relayIsOn(ch) != on) {
+      applyRelay(ch, on);
+      Serial.printf("[rtdb] %s -> %s\\n", CH_NAME[ch], on ? "ON" : "OFF");
+    }
+    return;
+  }
+}
+
+void streamCallback(FirebaseStream data) {
+  if (data.dataTypeEnum() == firebase_rtdb_data_type_boolean) {
+    // Delta: dataPath() is "/relayN"
+    applyStreamValue(data.dataPath().c_str() + 1, data.boolData());
+  } else if (data.dataTypeEnum() == firebase_rtdb_data_type_json) {
+    // Initial snapshot (or multi-key update): sync every known channel.
+    FirebaseJson* json = data.to<FirebaseJson*>();
+    FirebaseJsonData item;
+    for (int ch = 0; ch < CH_COUNT; ch++) {
+      if (json->get(item, CH_KEY[ch]) && item.success) {
+        applyStreamValue(CH_KEY[ch], item.boolValue);
+      }
+    }
+  }
+}
+
+void streamTimeoutCallback(bool timeout) {
+  if (timeout) Serial.println("[rtdb] stream timed out — resuming…");
+  if (!stream.httpConnected()) {
+    Serial.printf("[rtdb] stream error %d: %s\\n",
+                  stream.httpCode(), stream.errorReason().c_str());
   }
 }
 `;
 }
 
 function buildSetup(usedSlots, byRelay, physicalSlots) {
-  // pinMode lines for every relay (always)
-  const relayInit = usedSlots
-    .map((_, i) => `  pinMode(RELAY${i + 1}_PIN, OUTPUT); digitalWrite(RELAY${i + 1}_PIN, HIGH);  // start OFF`)
-    .join('\n');
-
   // Only physical-switch slots get pinMode + attachInterrupt.
   // Input-only pins (34/35/36/39) have no internal pull-up → use INPUT.
+  // (TTP223 modules drive the line push-pull, so no external pull-up needed;
+  // a mechanical click switch on these pins DOES need an external pull-up.)
   const switchInit = physicalSlots
     .map((slot) => {
       const i = usedSlots.indexOf(slot) + 1;
@@ -317,58 +435,98 @@ function buildSetup(usedSlots, byRelay, physicalSlots) {
   Serial.println();
   Serial.println("Booting Home Automation firmware…");
 
-  // ─── Relay outputs ────────────────────────────────────────────────────
-${relayInit}
+  // ─── Relay outputs (start OFF; RTDB snapshot restores state on connect) ─
+  for (int ch = 0; ch < CH_COUNT; ch++) {
+    pinMode(CH_PIN[ch], OUTPUT);
+    digitalWrite(CH_PIN[ch], HIGH);
+  }
 
 ${physicalSlots.length ? `  // ─── Switch inputs + interrupts ───────────────────────────────────────\n${switchInit}` : '  // (no physical switches wired — control is app-only)'}
 
   // ─── Wi-Fi ────────────────────────────────────────────────────────────
+  // setSleep(false): modem-sleep causes spurious interrupts on GPIO 36/39
+  // (ESP32 errata) AND adds latency — always disable it on relay boards.
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to Wi-Fi");
-  while (WiFi.status() != WL_CONNECTED) { Serial.print('.'); delay(500); }
-  Serial.println(" connected.");
+  unsigned long wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED) {
+    if (millis() - wifiStart > WIFI_BOOT_TIMEOUT_MS) {
+      Serial.println("\\nWi-Fi failed — check SSID/password. Restarting in 5 s…");
+      delay(5000);
+      ESP.restart();
+    }
+    Serial.print('.');
+    delay(250);
+  }
+  Serial.printf(" connected (%s).\\n", WiFi.localIP().toString().c_str());
 
   // ─── Firebase ─────────────────────────────────────────────────────────
   config.api_key       = API_KEY;
   config.database_url  = DATABASE_URL;
   auth.user.email      = USER_EMAIL;
   auth.user.password   = USER_PASSWORD;
+  // Bounded sign-in retries + status callback: with wrong credentials the
+  // device logs a clear error and stops, instead of hammering Firebase Auth
+  // until the account is rate-limited (auth/too-many-requests).
+  config.max_token_generation_retry = 5;
+  config.token_status_callback      = onTokenStatus;
+  // Right-sized TLS buffers (default 16 KB rx eats RAM for no benefit here).
+  fbdo.setBSSLBufferSize(2048, 1024);
+  stream.setBSSLBufferSize(2048, 1024);
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
-  Serial.println("Firebase ready.");
+
+  // ─── Live RTDB stream (instant push — no polling) ─────────────────────
+  if (!Firebase.RTDB.beginStream(&stream, RTDB_RELAYS_BASE)) {
+    Serial.printf("[rtdb] stream begin failed: %s\\n", stream.errorReason().c_str());
+  }
+  Firebase.RTDB.setStreamCallback(&stream, streamCallback, streamTimeoutCallback);
+
+  Serial.println("Setup complete — waiting for Firebase token…");
 }
 `;
 }
 
 function buildLoop(usedSlots, byRelay, physicalSlots) {
-  // Process each physical-switch's pending flag (skip app-only)
+  // Dispatch each physical-switch's pending flag by CHANNEL index.
   const isrDispatch = physicalSlots
     .map((slot) => {
-      const i = usedSlots.indexOf(slot);
-      const n = i + 1;
-      return `  if (switchPending[${i}]) { switchPending[${i}] = false; toggleRelay(RELAY${n}_PIN, RTDB_RELAY${n}); }`;
+      const ch = usedSlots.indexOf(slot);
+      return `  if (switchPending[${ch}]) { switchPending[${ch}] = false; toggleChannel(${ch}); }`;
     })
     .join('\n');
 
-  // Poll EVERY relay path (including app-only) so app-driven toggles still apply.
-  const pollLines = usedSlots
-    .map((_, idx) => {
-      const n = idx + 1;
-      return `    if (Firebase.RTDB.getBool(&fbdo, RTDB_RELAY${n}))
-      digitalWrite(RELAY${n}_PIN, fbdo.boolData() ? LOW : HIGH);`;
-    })
-    .join('\n');
-
-  return `unsigned long lastFirebasePoll = 0;
+  return `unsigned long lastPushRetry = 0;
+unsigned long wifiLostSince  = 0;
 
 void loop() {
-  // 1. Process flags set by physical-switch ISRs (catches the briefest taps).
+  // 1. Physical switches — relays react instantly, even with no internet.
 ${isrDispatch || '  // (no physical switches — nothing to dispatch)'}
 
-  // 2. Poll RTDB so app-driven toggles take effect within ~500 ms.
-  if (Firebase.ready() && (millis() - lastFirebasePoll >= FIREBASE_POLL_INTERVAL)) {
-    lastFirebasePoll = millis();
-${pollLines}
+  // 2. Re-push local toggles that happened while offline (RTDB catch-up).
+  if (Firebase.ready() && millis() - lastPushRetry >= PENDING_PUSH_RETRY_MS) {
+    lastPushRetry = millis();
+    for (int ch = 0; ch < CH_COUNT; ch++) {
+      if (pendingPush[ch] && Firebase.RTDB.setBool(&fbdo, CH_PATH[ch], relayIsOn(ch))) {
+        pendingPush[ch] = false;
+        Serial.printf("[sync] %s pushed after reconnect\\n", CH_NAME[ch]);
+      }
+    }
+  }
+
+  // 3. Wi-Fi watchdog — if the network stays gone too long, a clean restart
+  //    recovers stuck TLS sessions. Physical switches keep working meanwhile.
+  if (WiFi.status() != WL_CONNECTED) {
+    if (wifiLostSince == 0) wifiLostSince = millis();
+    else if (millis() - wifiLostSince > WIFI_LOST_RESTART_MS) {
+      Serial.println("Wi-Fi lost too long — restarting.");
+      ESP.restart();
+    }
+  } else {
+    wifiLostSince = 0;
   }
 }
 `;
@@ -380,7 +538,12 @@ ${pollLines}
 
 /** Wrap a string as a safe C string literal (escapes backslash and quote). */
 function escapeC(s) {
-  return '"' + String(s ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  return '"' + escapeForC(s) + '"';
+}
+
+/** Escape for embedding inside an existing C string literal (no quotes added). */
+function escapeForC(s) {
+  return String(s ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 /** "15 Jan 2026, 10:30 AM" — human readable, locale-independent. */
