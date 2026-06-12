@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import PasswordInput from '../components/PasswordInput';
 
 export default function Signup() {
   const { login } = useAuth();
@@ -60,7 +61,7 @@ export default function Signup() {
           </div>
           <div>
             <label className="label">Password</label>
-            <input className="input" type="password" minLength={6} value={form.password} onChange={set('password')} required />
+            <PasswordInput minLength={6} value={form.password} onChange={set('password')} required />
           </div>
 
           <div className="sm:col-span-2 mt-2">
