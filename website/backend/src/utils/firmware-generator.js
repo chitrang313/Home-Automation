@@ -24,32 +24,29 @@
  */
 
 // ─── GPIO pin maps ──────────────────────────────────────────────────────────
-// Relay pin order mirrors the working reference firmware for slots 1-4, then
-// extends with safe additional ESP32 DevKit pins for slots 5-8.
+// One ESP32 now drives up to 16 individually-wired single relay modules — one
+// per safe output GPIO. These are the 16 ESP32 GPIOs that can safely drive an
+// output (excludes input-only 34/35/36/39, flash 6-11, and the UART pins).
+// MUST mirror frontend src/constants/appliances.jsx (RELAY_GPIO).
 const RELAY_PINS = {
-  relay1: 23,
-  relay2: 19,
-  relay3: 18,
-  relay4: 5,
-  relay5: 25,
-  relay6: 26,
-  relay7: 32,
-  relay8: 33,
+  relay1: 23,  relay2: 19,  relay3: 18,  relay4: 5,
+  relay5: 25,  relay6: 26,  relay7: 32,  relay8: 33,
+  relay9: 22,  relay10: 21, relay11: 27, relay12: 14,
+  relay13: 16, relay14: 17, relay15: 4,  relay16: 13,
 };
 
-// Switch input pins — first four match the working reference exactly.
-// The remaining four are chosen from ESP32 GPIOs that support INPUT_PULLUP
-// and external interrupts, and don't conflict with boot strapping or flash.
+// Switch input pins. Because every safe OUTPUT pin is now claimed by a relay,
+// physical switches can only use the four INPUT-ONLY pins (34/35/36/39).
+// Therefore only the first four slots support a wired touch/click switch; the
+// rest are app-only. (Input-only pins have no internal pull-up, so they're
+// driven via INPUT — fine for TTP223 touch modules, which actively drive the
+// line; mechanical buttons on these pins need an external pull-up.)
 const SWITCH_PINS = {
-  relay1: 13,
-  relay2: 12,
-  relay3: 14,
-  relay4: 27,
-  relay5: 4,
-  relay6: 15,
-  relay7: 16,
-  relay8: 17,
+  relay1: 34, relay2: 35, relay3: 36, relay4: 39,
 };
+
+/** Input-only pins (no internal pull-up) — use INPUT instead of INPUT_PULLUP. */
+const INPUT_ONLY_PINS = new Set([34, 35, 36, 39]);
 
 const TOUCH_DEBOUNCE_MS = 150; // capacitive touch — quieter, slower retrigger
 const CLICK_DEBOUNCE_MS = 50;  // mechanical button — fast tap, more bounce on press
@@ -81,21 +78,28 @@ function generateIno(ctx) {
   } = ctx;
 
   // Sort by relay slot order so the file reads predictably.
-  const slotOrder = ['relay1','relay2','relay3','relay4','relay5','relay6','relay7','relay8'];
+  const slotOrder = Object.keys(RELAY_PINS); // relay1..relay16
   const byRelay = Object.fromEntries(
     appliances
       .filter((a) => a.relaySlot && slotOrder.includes(a.relaySlot))
       .map((a) => [a.relaySlot, a])
   );
 
-  const totalSlots = board.relayCount || 4;
-  const usedSlots = slotOrder.slice(0, totalSlots);
+  // Emit code only for slots that actually have an appliance — relays can be
+  // on ANY of the 16 GPIOs now, so we no longer slice by a contiguous count.
+  const usedSlots = slotOrder.filter((s) => byRelay[s]);
 
   // Pre-compute which slots have a physical switch (not "none").
   // App-only relays get NO ISR, NO pinMode for input, NO interrupt attach.
+  // A slot can only be physical if a switch GPIO exists for it (only the
+  // first four slots do — see SWITCH_PINS) — otherwise it's app-only.
   const physicalSlots = usedSlots.filter((s) => {
     const ap = byRelay[s];
-    return ap && (ap.switchType === 'touch' || ap.switchType === 'click');
+    return (
+      ap &&
+      (ap.switchType === 'touch' || ap.switchType === 'click') &&
+      SWITCH_PINS[s] !== undefined
+    );
   });
 
   // ─── Build sections ─────────────────────────────────────────────────────
@@ -166,7 +170,7 @@ function buildHeader(house, room, board, persons, byRelay, usedSlots, generatedA
  * ============================================================================
  *   House     : ${house.name}${house.location ? `  (${house.location})` : ''}
  *   Room      : ${room.name}${room.floor ? `  (${room.floor} floor)` : ''}
- *   Board     : ${board.label}  •  ${board.relayCount}-Channel Relay Module
+ *   Board     : ${board.label}  •  ${usedSlots.length} individually-wired relay${usedSlots.length === 1 ? '' : 's'}
  *   Device ID : ${board.deviceId}   (DO NOT CHANGE)
  * ----------------------------------------------------------------------------
  *   Contact Persons:
@@ -297,11 +301,13 @@ function buildSetup(usedSlots, byRelay, physicalSlots) {
     .map((_, i) => `  pinMode(RELAY${i + 1}_PIN, OUTPUT); digitalWrite(RELAY${i + 1}_PIN, HIGH);  // start OFF`)
     .join('\n');
 
-  // Only physical-switch slots get pinMode + attachInterrupt
+  // Only physical-switch slots get pinMode + attachInterrupt.
+  // Input-only pins (34/35/36/39) have no internal pull-up → use INPUT.
   const switchInit = physicalSlots
     .map((slot) => {
       const i = usedSlots.indexOf(slot) + 1;
-      return `  pinMode(SWITCH${i}_PIN, INPUT_PULLUP);
+      const mode = INPUT_ONLY_PINS.has(SWITCH_PINS[slot]) ? 'INPUT' : 'INPUT_PULLUP';
+      return `  pinMode(SWITCH${i}_PIN, ${mode});
   attachInterrupt(digitalPinToInterrupt(SWITCH${i}_PIN), switch${i}ISR, FALLING);`;
     })
     .join('\n');

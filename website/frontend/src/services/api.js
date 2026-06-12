@@ -139,7 +139,8 @@ export const api = {
 
   // ─── Firmware download ────────────────────────────────────────────────
   /**
-   * Downloads the generated .ino as a Blob. Returns { blob, filename }.
+   * Downloads the firmware as a .zip Blob containing a same-named sketch
+   * folder + .ino. Returns { blob, filename } (filename ends in .zip).
    * Wi-Fi + Firebase credentials are POSTed in the body (never the URL) so
    * they don't leak into browser history or server access logs.
    */
@@ -149,18 +150,9 @@ export const api = {
       { method: 'POST', body: { ssid, pass, userEmail, userPassword }, raw: true }
     );
     const blob = await res.blob();
-    // Pull the filename from Content-Disposition. Prefer the RFC 5987
-    // `filename*=UTF-8''…` form (carries the "{House}/{House}_{Room}.ino"
-    // path), falling back to the plain ASCII `filename="…"`.
     const dispo = res.headers.get('Content-Disposition') || '';
-    const star = /filename\*=UTF-8''([^;]+)/i.exec(dispo);
     const plain = /filename="?([^";]+)"?/i.exec(dispo);
-    let filename = 'firmware.ino';
-    if (star) {
-      try { filename = decodeURIComponent(star[1]); } catch { filename = star[1]; }
-    } else if (plain) {
-      filename = plain[1];
-    }
+    const filename = plain ? plain[1] : 'firmware.zip';
     return { blob, filename };
   },
 };

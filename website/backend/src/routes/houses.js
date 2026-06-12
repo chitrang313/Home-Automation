@@ -38,32 +38,28 @@ const {
 const router = express.Router();
 
 // ─── Constants ──────────────────────────────────────────────────────────────
-const MAX_RELAYS_PER_BOARD = 8;
-const RELAY_SLOTS_4 = ['relay1', 'relay2', 'relay3', 'relay4'];
-const RELAY_SLOTS_8 = [
-  'relay1', 'relay2', 'relay3', 'relay4',
-  'relay5', 'relay6', 'relay7', 'relay8',
+// One ESP32 drives up to 16 individually-wired single relay modules — one per
+// safe output GPIO. The old "4/8-channel board" concept is gone; every board
+// simply exposes all 16 slots and `relayCount` just records how many are used.
+const MAX_RELAYS_PER_BOARD = 16;
+const RELAY_SLOTS = [
+  'relay1',  'relay2',  'relay3',  'relay4',
+  'relay5',  'relay6',  'relay7',  'relay8',
+  'relay9',  'relay10', 'relay11', 'relay12',
+  'relay13', 'relay14', 'relay15', 'relay16',
 ];
 
-/** Choose board capacity from current appliance count on that board. */
+/** Number of relays currently in use on a board (display only; not a cap). */
 function relayCountFor(applianceCount) {
-  if (applianceCount <= 4) return 4;
-  if (applianceCount <= 8) return 8;
-  // > 8 cannot fit on a single ESP32 — caller is expected to reject before this.
-  return 8;
+  return Math.min(Math.max(applianceCount, 0), MAX_RELAYS_PER_BOARD);
 }
 
 /**
- * Returns the slot whitelist for a board, respecting its actual relayCount.
- * Defaults to 4-channel if relayCount is missing or unrecognised.
- *
- * This is critical for auto-pick: assigning relay5..relay8 to a board that's
- * still 4-channel would create an "invisible" appliance — it would persist
- * in Firestore but its slot wouldn't exist on the live ESP32 until the
- * admin physically swaps to an 8-channel relay board and re-flashes.
+ * Slots assignable on a board. Every ESP32 exposes all 16 slots now, so this
+ * is a constant — kept as a function so existing call sites need no change.
  */
-function slotsForBoard(board) {
-  return (board?.relayCount || 4) >= 8 ? RELAY_SLOTS_8 : RELAY_SLOTS_4;
+function slotsForBoard() {
+  return RELAY_SLOTS;
 }
 
 /**
@@ -99,9 +95,9 @@ async function reconcileBoard(houseId, roomId, boardId, options = {}) {
  * Initialise the RTDB relay state nodes for a board (all false).
  * Idempotent — Firebase set() overwrites only the keys we provide.
  */
-async function initBoardRtdbState(deviceId, relayCount = MAX_RELAYS_PER_BOARD) {
-  const slots = relayCount >= 8 ? RELAY_SLOTS_8 : RELAY_SLOTS_4;
-  const payload = Object.fromEntries(slots.map((slot) => [slot, false]));
+async function initBoardRtdbState(deviceId) {
+  // Seed every slot so dashboards can render OFF cards before the ESP32 boots.
+  const payload = Object.fromEntries(RELAY_SLOTS.map((slot) => [slot, false]));
   await admin.database().ref(`devices/${deviceId}/relays`).set(payload);
 }
 
@@ -470,7 +466,7 @@ router.post(
       const boardData = {
         deviceId,
         label: autoLabel,
-        relayCount: 4,         // starts as 4-channel; auto-bumps to 8 if >4 appliances
+        relayCount: 0,         // count of relays in use; recomputed on every appliance change
         lastDownloadAt: null,  // until admin downloads firmware
         firmwareNeedsUpdate: false,
         createdAt: now,
@@ -478,7 +474,7 @@ router.post(
       await newBoard.set(boardData);
 
       // Seed RTDB so the dashboard can show "OFF" cards before the ESP32 boots.
-      await initBoardRtdbState(deviceId, 4);
+      await initBoardRtdbState(deviceId);
 
       res.json({ id: deviceId, ...boardData });
     } catch (err) {
@@ -703,13 +699,13 @@ router.post(
           const newBoardData = {
             deviceId,
             label: autoLabel,
-            relayCount: 4,
+            relayCount: 0,
             lastDownloadAt: null,
             firmwareNeedsUpdate: false,
             createdAt: Date.now(),
           };
           await newBoard.set(newBoardData);
-          await initBoardRtdbState(deviceId, 4);
+          await initBoardRtdbState(deviceId);
 
           boards[deviceId] = newBoardData;
           placedBoardId = deviceId;
@@ -856,7 +852,7 @@ router.post(
           firmwareNeedsUpdate: false,
           createdAt: Date.now(),
         });
-        await initBoardRtdbState(deviceId, 4);
+        await initBoardRtdbState(deviceId);
         chosenBoardId = deviceId;
         chosenSlot = 'relay1';
       }

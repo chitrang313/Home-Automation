@@ -23,6 +23,7 @@
  *   switch types, etc. — so what gets generated is always admin-approved.
  */
 const express = require('express');
+const JSZip = require('jszip');
 const { admin } = require('../firebase-admin');
 const { verifyAuth } = require('../middleware/auth');
 const {
@@ -125,7 +126,7 @@ router.post(
       const source = generateIno({
         house: { name: house.name, location: house.location },
         room:  { name: room.name,  floor: room.floor },
-        board: { deviceId: board.deviceId, label: board.label, relayCount: board.relayCount || 4 },
+        board: { deviceId: board.deviceId, label: board.label, relayCount: board.relayCount || 0 },
         persons,
         appliances,
         wifi: { ssid, password: pass },
@@ -134,11 +135,9 @@ router.post(
 
       // ─── Seed RTDB relay state (idempotent) ───────────────────────────
       // Ensures dashboards can show OFF cards before the ESP32 has booted.
-      const slots = (board.relayCount || 4) >= 8
-        ? ['relay1','relay2','relay3','relay4','relay5','relay6','relay7','relay8']
-        : ['relay1','relay2','relay3','relay4'];
-      const seed = Object.fromEntries(slots.map((s) => [s, false]));
-      // setIfMissing semantics via update — only fills nulls; existing true/false stays.
+      // Seed exactly the slots this board's appliances occupy (relays can be
+      // on any of the 16 GPIOs now), only filling nodes that don't exist yet.
+      const slots = appliances.map((a) => a.relaySlot).filter(Boolean);
       const existing = await admin.database().ref(`devices/${board.deviceId}/relays`).get();
       const existingVal = existing.val() || {};
       const patch = {};
@@ -148,32 +147,37 @@ router.post(
       }
 
       // ─── Mark this board as freshly downloaded ────────────────────────
+      // Persist the Wi-Fi SSID so the next download prefills it. The Wi-Fi
+      // PASSWORD is never stored (it's only used to template this file) —
+      // it must be re-entered each time.
       await boardRef(houseId, roomId, boardId).set(
-        { lastDownloadAt: Date.now(), firmwareNeedsUpdate: false },
+        { lastDownloadAt: Date.now(), firmwareNeedsUpdate: false, wifiSsid: ssid },
         { merge: true }
       );
 
-      // ─── Send as a downloadable file ──────────────────────────────────
-      // Name it "{House}/{House}_{Room}.ino". Only when the room holds more
-      // than one board do we append the board label, so two boards in the
-      // same room can't silently overwrite each other on download.
+      // ─── Send as a .zip (sketch folder + matching .ino inside) ─────────
+      // buildFilename returns "{stem}/{stem}.ino"; the zip is "{stem}.zip"
+      // containing a "{stem}/" folder with "{stem}.ino" — drops straight into
+      // the Arduino IDE (which needs a sketch in a folder of the same name).
+      // Only when the room holds more than one board do we append the board
+      // label, so two boards in the same room can't collide.
       const roomBoardCount = await roomRef(houseId, roomId)
         .collection('boards')
         .get()
         .then((s) => s.size);
-      const filename = buildFilename(house, room, board, {
+      const inoPath = buildFilename(house, room, board, {
         disambiguate: roomBoardCount > 1,
-      });
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      // RFC 5987 / 6266: provide both a sanitised ASCII fallback and the
-      // UTF-8 path form. Browsers that honour subfolders use filename*;
-      // the rest fall back to the flattened ASCII name.
-      const asciiFallback = filename.replace(/\//g, '_');
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
-      );
-      res.send(source);
+      });                                   // e.g. "GaneshKrupa_Hall/GaneshKrupa_Hall.ino"
+      const stem = inoPath.split('/')[0];   // e.g. "GaneshKrupa_Hall"
+      const zipName = `${stem}.zip`;
+
+      const zip = new JSZip();
+      zip.file(inoPath, source);
+      const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+      res.send(buffer);
     } catch (err) {
       next(err);
     }

@@ -176,31 +176,44 @@ export const SWITCH_TYPES = [
 
 export const SWITCH_TYPE_MAP = Object.fromEntries(SWITCH_TYPES.map((s) => [s.id, s]));
 
-/** Relay slots in canonical order — useful for 4ch / 8ch dropdowns. */
+/**
+ * One ESP32 now drives up to 16 individually-wired single relay modules —
+ * one per safe output GPIO. The "4/8-channel board" concept is gone; each
+ * slot is just one relay on one fixed GPIO pin.
+ *
+ * RELAY_GPIO / SWITCH_GPIO MUST mirror the backend firmware generator
+ * (website/backend/src/utils/firmware-generator.js). Relay pins are the 16
+ * ESP32 GPIOs that can safely drive an output. Physical switches (touch /
+ * click) can only use the 4 input-only pins (34/35/36/39), so only the first
+ * four slots support a wired switch — the rest are app-only.
+ */
 export const RELAY_SLOTS = [
-  'relay1', 'relay2', 'relay3', 'relay4',
-  'relay5', 'relay6', 'relay7', 'relay8',
+  'relay1',  'relay2',  'relay3',  'relay4',
+  'relay5',  'relay6',  'relay7',  'relay8',
+  'relay9',  'relay10', 'relay11', 'relay12',
+  'relay13', 'relay14', 'relay15', 'relay16',
 ];
 
-/**
- * Relay + switch GPIO pins — MUST mirror backend
- * website/backend/src/utils/firmware-generator.js (RELAY_PINS / SWITCH_PINS).
- * Used only for display in the Advanced board view so the admin can see which
- * ESP32 pin each slot maps to in the generated firmware.
- */
 export const RELAY_GPIO = {
   relay1: 23, relay2: 19, relay3: 18, relay4: 5,
   relay5: 25, relay6: 26, relay7: 32, relay8: 33,
+  relay9: 22, relay10: 21, relay11: 27, relay12: 14,
+  relay13: 16, relay14: 17, relay15: 4, relay16: 13,
 };
 export const SWITCH_GPIO = {
-  relay1: 13, relay2: 12, relay3: 14, relay4: 27,
-  relay5: 4,  relay6: 15, relay7: 16, relay8: 17,
+  relay1: 34, relay2: 35, relay3: 36, relay4: 39,
 };
 
-/** "RELAY1_PIN · GPIO 23" style label for a slot. */
+/** "RELAY1 · GPIO 23" style label for a slot. */
 export function relayPinLabel(slot) {
   const n = RELAY_SLOTS.indexOf(slot) + 1;
   const gpio = RELAY_GPIO[slot];
   if (!n || gpio === undefined) return '';
-  return `RELAY${n}_PIN · GPIO ${gpio}`;
+  return `RELAY${n} · GPIO ${gpio}`;
+}
+
+/** "GPIO 23" style label (pin-first) for the assignment dropdown. */
+export function gpioLabel(slot) {
+  const gpio = RELAY_GPIO[slot];
+  return gpio === undefined ? slot : `GPIO ${gpio}`;
 }

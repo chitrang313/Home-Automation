@@ -4,7 +4,7 @@ import {
   APPLIANCE_TYPES,
   SWITCH_TYPES,
   RELAY_SLOTS,
-  getApplianceType,
+  gpioLabel,
 } from '../constants/appliances.jsx';
 
 /**
@@ -51,15 +51,16 @@ export default function EditApplianceModal({
     setIcon(appliance.icon || appliance.type || 'other');
     setType(appliance.type || 'other');
     setSwitchType(appliance.switchType || 'touch');
-    setBoardId(appliance.boardId || '');
+    // One ESP32 per room — auto-attach to the room's board (no board picker).
+    setBoardId(appliance.boardId || boards[0]?.id || '');
     setRelaySlot(appliance.relaySlot || '');
     setErr('');
-  }, [open, appliance]);
+  }, [open, appliance, boards]);
 
   if (!appliance) return null;
 
-  const selectedBoard = boards.find((b) => b.id === boardId);
-  const slotChoices = (selectedBoard?.relayCount || 4) >= 8 ? RELAY_SLOTS : RELAY_SLOTS.slice(0, 4);
+  // Every board now exposes all 16 GPIO slots.
+  const slotChoices = RELAY_SLOTS;
 
   // Build diff vs original — only send changed fields so backend doesn't
   // see no-op writes (keeps audit trail clean and avoids needless reconciles).
@@ -161,36 +162,28 @@ export default function EditApplianceModal({
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="label">Board</label>
-                <select className="input" value={boardId} onChange={(e) => { setBoardId(e.target.value); setRelaySlot(''); }}>
-                  <option value="">— unassigned —</option>
-                  {boards.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.label} ({b.relayCount}-ch)
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="label">Relay Slot</label>
+              <div className="sm:col-span-2">
+                <label className="label">GPIO Pin</label>
                 <select
                   className="input"
                   value={relaySlot}
                   onChange={(e) => setRelaySlot(e.target.value)}
-                  disabled={!boardId}
                 >
-                  <option value="">— pick a slot —</option>
+                  <option value="">— pick a GPIO pin —</option>
                   {slotChoices.map((s) => {
                     const taken =
                       occupiedSlots[boardId]?.has(s) && s !== appliance.relaySlot;
                     return (
                       <option key={s} value={s} disabled={taken}>
-                        {s.toUpperCase()}{taken ? ' (in use)' : ''}
+                        {gpioLabel(s)}{taken ? ' (in use)' : ''}
                       </option>
                     );
                   })}
                 </select>
+                <p className="text-[11px] text-ink/50 mt-1">
+                  The ESP32 pin this appliance&apos;s relay is wired to. Each pin
+                  drives one relay; pins already used in this room are disabled.
+                </p>
               </div>
             </div>
           </details>

@@ -42,15 +42,12 @@ export default function BoardCard({ houseId, roomId, board, appliances = [], onC
   const [dlOpen, setDlOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
-  const totalSlots = (board.relayCount || 4) >= 8 ? 8 : 4;
-  const targetSlots = RELAY_SLOTS.slice(0, totalSlots);
-
-  // Appliances WITH a slot, in current slot order — these are draggable.
+  // Appliances WITH a GPIO assigned, in pin order — these are draggable.
   const placed = useMemo(() => {
     return appliances
-      .filter((a) => a.relaySlot && targetSlots.includes(a.relaySlot))
+      .filter((a) => a.relaySlot && RELAY_SLOTS.includes(a.relaySlot))
       .sort((a, b) => RELAY_SLOTS.indexOf(a.relaySlot) - RELAY_SLOTS.indexOf(b.relaySlot));
-  }, [appliances, totalSlots]);
+  }, [appliances]);
 
   // Local mirror so the drop settles before the parent refetch reorders DOM.
   const [items, setItems] = useState(placed);
@@ -106,9 +103,6 @@ export default function BoardCard({ houseId, roomId, board, appliances = [], onC
     }
   };
 
-  // Trailing empty slots (after the placed appliances are compacted).
-  const emptySlots = targetSlots.slice(items.length);
-
   return (
     <div className="rounded-xl border border-slate2 bg-paper">
       {/* ── Header ─────────────────────────────────────────────────── */}
@@ -117,7 +111,7 @@ export default function BoardCard({ houseId, roomId, board, appliances = [], onC
           <div className="font-medium text-sm truncate">
             {board.label}
             <span className="ml-2 text-xs text-ink/50 font-normal">
-              • {board.relayCount}-Channel • {usedCount} appliance{usedCount === 1 ? '' : 's'}
+              • {usedCount} of 16 GPIO pins used
             </span>
           </div>
           <div className="text-[10px] text-ink/40 font-mono truncate">{board.deviceId}</div>
@@ -129,38 +123,36 @@ export default function BoardCard({ houseId, roomId, board, appliances = [], onC
         )}
       </div>
 
-      {/* ── Slot list: occupied (draggable) then empty ──────────────── */}
+      {/* ── Relay list (each row shows its actual GPIO; drag to reorder) ─ */}
       <div className="px-2 py-1">
-        {items.length > 1 && (
-          <div className="px-2 pt-2 pb-1 text-[10px] text-ink/40">
-            Drag a row to rearrange which GPIO each appliance uses.
+        {items.length === 0 ? (
+          <div className="px-2 py-3 text-xs text-ink/40 italic">
+            No appliances wired to this ESP32 yet.
           </div>
+        ) : (
+          <>
+            {items.length > 1 && (
+              <div className="px-2 pt-2 pb-1 text-[10px] text-ink/40">
+                Drag a row to renumber the relays (compacts to RELAY1, RELAY2, …).
+                To pin an appliance to a specific GPIO, use its edit pencil.
+              </div>
+            )}
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+              <SortableContext items={items.map((a) => a.id)} strategy={verticalListSortingStrategy}>
+                <ul>
+                  {items.map((a) => (
+                    <SortableSlotRow
+                      key={a.id}
+                      appliance={a}
+                      slot={a.relaySlot}
+                      onEdit={() => setEditingId(a.id)}
+                    />
+                  ))}
+                </ul>
+              </SortableContext>
+            </DndContext>
+          </>
         )}
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-          <SortableContext items={items.map((a) => a.id)} strategy={verticalListSortingStrategy}>
-            <ul>
-              {items.map((a, idx) => (
-                <SortableSlotRow
-                  key={a.id}
-                  appliance={a}
-                  slot={targetSlots[idx]}
-                  onEdit={() => setEditingId(a.id)}
-                />
-              ))}
-            </ul>
-          </SortableContext>
-        </DndContext>
-
-        {/* Empty slots — static, not draggable */}
-        <ul>
-          {emptySlots.map((slot) => (
-            <li key={slot} className="flex items-center gap-3 px-2 py-2.5 border-t border-slate2/60">
-              <span className="w-5 shrink-0" aria-hidden />
-              <span className="font-mono text-[10px] text-ink/40 w-32 shrink-0">{relayPinLabel(slot)}</span>
-              <span className="text-xs text-ink/40 italic">empty</span>
-            </li>
-          ))}
-        </ul>
       </div>
 
       {/* ── Footer: firmware download ─────────────────────────────── */}

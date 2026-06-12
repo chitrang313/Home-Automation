@@ -11,9 +11,10 @@ import {
   SWITCH_TYPES,
 } from '../constants/appliances.jsx';
 
-/** Total slot capacity across boards in a room (sums each board's relayCount). */
+/** Total relay capacity across boards in a room. Each ESP32 exposes 16 GPIOs. */
+const PINS_PER_BOARD = 16;
 function totalCapacity(boards) {
-  return (boards || []).reduce((n, b) => n + (b.relayCount || 4), 0);
+  return (boards || []).length * PINS_PER_BOARD;
 }
 
 /**
@@ -445,8 +446,8 @@ function RoomEditor({ houseId, room, onChange }) {
         <div className="mt-3 pl-4 border-l-2 border-slate2 space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-[11px] text-ink/55 leading-relaxed pr-2">
-              Each ESP32 board controls up to 4 (or 8) relays. The slot
-              assignment, channel count, and firmware download are managed here.
+              Each ESP32 controls up to 16 individually-wired relays (one per
+              GPIO pin). Pin assignment and firmware download are managed here.
             </p>
             <button
               onClick={async () => { await api.addBoard(houseId, room.id, {}); onChange(); }}
@@ -458,9 +459,9 @@ function RoomEditor({ houseId, room, onChange }) {
 
           {overCapacity && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs leading-relaxed">
-              ⚠ <strong>Relay board upgrade required.</strong>{' '}
-              The room has {totalCount} appliances but only {capacity} relay slots across {room.boards.length} board{room.boards.length === 1 ? '' : 's'}.
-              Either add another board, or replace the existing 4-channel relay board with an 8-channel one and re-flash.
+              ⚠ <strong>Another ESP32 needed.</strong>{' '}
+              The room has {totalCount} appliances but only {capacity} GPIO pins across {room.boards.length} ESP32{room.boards.length === 1 ? '' : 's'} (16 each).
+              Add another board to wire the rest.
             </div>
           )}
 

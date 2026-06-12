@@ -38,14 +38,17 @@ export default function DownloadFirmwareModal({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  // Prefill the Firebase email with the currently-logged-in user each time
-  // the dialog opens; clear the password so it's never lingering in memory.
+  // On open: prefill the Firebase email with the logged-in user and the Wi-Fi
+  // SSID with the board's last-saved value. Passwords are always cleared —
+  // neither password is stored, so they must be re-entered each time.
   useEffect(() => {
     if (open) {
       setFbEmail(auth.currentUser?.email || '');
       setFbPass('');
+      setSsid(board?.wifiSsid || '');
+      setPass('');
     }
-  }, [open]);
+  }, [open, board]);
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -219,9 +222,10 @@ export default function DownloadFirmwareModal({
 
         {/* ─── Safety warning ─────────────────────────────────────────── */}
         <div className="text-xs text-ink/60 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed">
-          ⚠ The downloaded <code>.ino</code> file contains your Wi-Fi password
-          and Firebase credentials. Treat it like a key — do not share or
-          commit it to a public repo.
+          ⚠ The downloaded <code>.zip</code> (sketch folder + <code>.ino</code>)
+          contains your Wi-Fi password and Firebase account password in plain
+          text. Treat it like a key — do not share it or commit it to a public
+          repo.
         </div>
 
         {err && <div className="text-sm text-danger">{err}</div>}
@@ -231,7 +235,7 @@ export default function DownloadFirmwareModal({
             Cancel
           </button>
           <button type="submit" disabled={busy} className="btn-primary">
-            {busy ? 'Generating…' : '⬇ Download .ino'}
+            {busy ? 'Generating…' : '⬇ Download .zip'}
           </button>
         </div>
       </form>
