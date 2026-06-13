@@ -5,7 +5,7 @@
 export default function RoomTabs({ rooms, activeId, onSelect }) {
   if (!rooms?.length) {
     return (
-      <div className="on-bg-muted text-sm py-3 px-1">No rooms yet — ask admin to add one.</div>
+      <div className="text-ink/50 text-sm py-3 px-1">No rooms yet — ask admin to add one.</div>
     );
   }
   return (
@@ -18,10 +18,10 @@ export default function RoomTabs({ rooms, activeId, onSelect }) {
               key={r.id}
               onClick={() => onSelect(r.id)}
               className={
-                'whitespace-nowrap px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ' +
+                'whitespace-nowrap px-4 py-2 rounded-full text-sm font-medium transition-colors ' +
                 (isActive
-                  ? 'bg-ink text-paper shadow-[0_6px_18px_rgba(0,0,0,0.4)]'
-                  : 'glass text-ink/80 hover:text-ink')
+                  ? 'bg-ink text-paper'
+                  : 'bg-slate1 text-ink/70 hover:bg-slate2')
               }
             >
               {r.name}

@@ -29,12 +29,12 @@ export default function AdminDashboard() {
   const [tab, setTab] = useState('houses');
   return (
     <main className="max-w-6xl mx-auto px-4 sm:px-5 py-6 sm:py-10">
-      <h1 className="on-bg text-2xl font-bold tracking-tight mb-1">Admin Panel</h1>
-      <p className="on-bg-muted text-sm mb-5 sm:mb-6">
+      <h1 className="text-2xl font-bold tracking-tight mb-1">Admin Panel</h1>
+      <p className="text-sm mb-5 sm:mb-6 text-ink/60">
         Manage houses, persons, appliances, and ESP32 firmware.
       </p>
 
-      <div className="inline-flex p-1 glass rounded-xl mb-5 sm:mb-6">
+      <div className="inline-flex p-1 bg-slate1 rounded-xl mb-5 sm:mb-6">
         {[
           ['houses',  'Houses'],
           ['persons', 'Persons'],
@@ -45,7 +45,7 @@ export default function AdminDashboard() {
             onClick={() => setTab(k)}
             className={
               'px-3.5 sm:px-4 py-1.5 text-sm font-medium rounded-lg transition ' +
-              (tab === k ? 'bg-white/80 text-ink shadow-sm' : 'text-ink/60 hover:text-ink')
+              (tab === k ? 'bg-white text-ink shadow-sm' : 'text-ink/60 hover:text-ink')
             }
           >{label}</button>
         ))}
@@ -1014,7 +1014,7 @@ function FindBody({ houseIds }) {
           )}
         </button>
       </div>
-      {loading && <div className="on-bg-muted text-sm">Loading…</div>}
+      {loading && <div className="text-ink/60 text-sm">Loading…</div>}
       {filtered.length === 0 ? (
         <div className="card text-center py-10 text-ink/50">No appliances match the current filter.</div>
       ) : (
@@ -1050,5 +1050,5 @@ function FindBody({ houseIds }) {
 }
 
 function Center({ children }) {
-  return <div className="min-h-[40vh] flex items-center justify-center on-bg-muted">{children}</div>;
+  return <div className="min-h-[40vh] flex items-center justify-center text-ink/60">{children}</div>;
 }

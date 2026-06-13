@@ -117,11 +117,8 @@ export default function ApplianceCard({
   return (
     <div
       className={
-        'card hover-lift flex items-center justify-between gap-3 sm:gap-4 ' +
-        (isOn
-          ? 'shadow-[0_0_0_1.5px_rgba(16,185,129,0.45),0_12px_40px_rgba(0,0,0,0.28),0_0_32px_rgba(16,185,129,0.28)] '
-          : '') +
-        (isDragging ? 'scale-[1.03] shadow-[0_0_0_1.5px_rgba(59,130,246,0.5),0_18px_50px_rgba(0,0,0,0.4)] ' : '')
+        'card flex items-center justify-between gap-3 sm:gap-4 ' +
+        (isDragging ? 'scale-[1.03] opacity-90 ' : '')
       }
     >
       {/* ─── Left: optional drag handle + icon + identity ──────────── */}
@@ -138,10 +135,8 @@ export default function ApplianceCard({
         )}
         <div
           className={
-            'shrink-0 w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center transition-all duration-200 ' +
-            (isOn
-              ? 'bg-success/15 shadow-[0_0_16px_rgba(16,185,129,0.3)]'
-              : 'bg-slate1')
+            'shrink-0 w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center transition-colors ' +
+            (isOn ? 'bg-success/15' : 'bg-slate1')
           }
         >
           <ApplianceIcon kind={appliance.icon || appliance.type} on={isOn} className="w-6 h-6 sm:w-7 sm:h-7" />
@@ -197,10 +192,8 @@ export default function ApplianceCard({
           aria-pressed={isOn}
           aria-label={`Toggle ${appliance.name}`}
           className={
-            'relative w-14 h-8 rounded-full transition-all duration-200 ' +
-            (isOn
-              ? 'bg-success shadow-[0_0_18px_rgba(16,185,129,0.65),inset_0_1px_2px_rgba(255,255,255,0.4)]'
-              : 'bg-slate3/80 shadow-[inset_0_1px_3px_rgba(0,0,0,0.25)]') +
+            'relative w-14 h-8 rounded-full transition-colors ' +
+            (isOn ? 'bg-success' : 'bg-slate3') +
             ' disabled:opacity-40 disabled:cursor-not-allowed'
           }
         >

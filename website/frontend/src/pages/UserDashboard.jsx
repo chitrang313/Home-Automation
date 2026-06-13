@@ -123,10 +123,10 @@ export default function UserDashboard() {
                 key={t.house.id}
                 onClick={() => { setActiveHouseId(t.house.id); setActiveRoomId(null); }}
                 className={
-                  'px-3.5 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ' +
+                  'px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors ' +
                   (isActive
-                    ? 'bg-ink text-paper shadow-[0_6px_18px_rgba(0,0,0,0.4)]'
-                    : 'glass text-ink/80 hover:text-ink')
+                    ? 'bg-ink text-paper'
+                    : 'bg-slate1 text-ink/70 hover:bg-slate2')
                 }
               >
                 {t.house.name}
@@ -146,7 +146,7 @@ export default function UserDashboard() {
       />
 
       {error && <div className="card text-danger text-sm mb-4">{error}</div>}
-      {loading && <div className="on-bg-muted text-sm">Loading…</div>}
+      {loading && <div className="text-ink/60 text-sm">Loading…</div>}
 
       {filterActive ? (
         filtered.length === 0 ? (
@@ -171,11 +171,11 @@ export default function UserDashboard() {
         activeTree && (
           <>
             <section className="mb-5">
-              <h1 className="on-bg text-xl sm:text-2xl font-bold tracking-tight">
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
                 {activeTree.house.name}
               </h1>
               {activeTree.house.location && (
-                <p className="on-bg-muted text-sm mt-1">{activeTree.house.location}</p>
+                <p className="text-sm mt-1 text-ink/60">{activeTree.house.location}</p>
               )}
             </section>
 
@@ -197,7 +197,7 @@ export default function UserDashboard() {
             </section>
 
             {!activeRoom || activeRoom.appliances.length === 0 ? (
-              <div className="on-bg-muted text-sm">
+              <div className="text-ink/60 text-sm">
                 No appliances in this room yet.
               </div>
             ) : visibleRoomAppliances.length === 0 ? (
@@ -278,10 +278,10 @@ function FavoritesToggle({ active, onToggle, disabled, count }) {
       aria-pressed={active}
       title={title}
       className={
-        'shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ' +
+        'shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ' +
         (active
-          ? 'bg-amber-400/20 text-amber-100 ring-1 ring-amber-300/50 shadow-[0_0_18px_rgba(251,191,36,0.35)]'
-          : 'glass text-ink/80 hover:text-ink') +
+          ? 'bg-amber-400/15 text-amber-700 ring-1 ring-amber-400/40'
+          : 'bg-slate1 text-ink/70 hover:bg-slate2') +
         ' disabled:opacity-50 disabled:cursor-not-allowed'
       }
     >

@@ -38,8 +38,8 @@ export default function Profile() {
 
   return (
     <main className="max-w-2xl mx-auto px-4 sm:px-5 py-6 sm:py-10 pb-12">
-      <h1 className="on-bg text-xl sm:text-2xl font-bold tracking-tight mb-1">My Profile</h1>
-      <p className="on-bg-muted text-sm mb-5 sm:mb-6">Your account information and linked houses.</p>
+      <h1 className="text-xl sm:text-2xl font-bold tracking-tight mb-1">My Profile</h1>
+      <p className="text-sm mb-5 sm:mb-6 text-ink/60">Your account information and linked houses.</p>
 
       {err && <div className="text-sm text-danger mb-4">{err}</div>}
 

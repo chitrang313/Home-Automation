@@ -18,7 +18,6 @@ export default function App() {
   return (
     <BrowserRouter basename={basename}>
       <AuthProvider>
-        <GlassFilter />
         <Navbar />
         <Routes>
           <Route path="/" element={<Welcome />} />
@@ -53,34 +52,5 @@ export default function App() {
         </Routes>
       </AuthProvider>
     </BrowserRouter>
-  );
-}
-
-/**
- * Hidden SVG filter that powers the "liquid glass" refraction on modals
- * (referenced by .lg-effect in index.css as url(#glass-distortion)).
- * Rendered once for the whole app. Browsers that can't composite it simply
- * fall back to the plain frosted blur — the glass still looks correct.
- */
-function GlassFilter() {
-  return (
-    <svg
-      aria-hidden="true"
-      width="0"
-      height="0"
-      style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden' }}
-    >
-      <filter id="glass-distortion" x="0%" y="0%" width="100%" height="100%" filterUnits="objectBoundingBox">
-        <feTurbulence type="fractalNoise" baseFrequency="0.008 0.008" numOctaves="2" seed="5" result="turbulence" />
-        <feGaussianBlur in="turbulence" stdDeviation="3" result="softMap" />
-        <feDisplacementMap
-          in="SourceGraphic"
-          in2="softMap"
-          scale="70"
-          xChannelSelector="R"
-          yChannelSelector="G"
-        />
-      </filter>
-    </svg>
   );
 }
