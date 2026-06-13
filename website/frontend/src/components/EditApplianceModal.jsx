@@ -4,8 +4,14 @@ import {
   APPLIANCE_TYPES,
   SWITCH_TYPES,
   RELAY_SLOTS,
+  RELAY_GPIO,
   gpioLabel,
 } from '../constants/appliances.jsx';
+
+// Sorted by GPIO pin number ascending (4, 5, 13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33).
+const SLOTS_BY_GPIO = [...RELAY_SLOTS].sort(
+  (a, b) => (RELAY_GPIO[a] ?? 999) - (RELAY_GPIO[b] ?? 999)
+);
 
 /**
  * Edit modal for an appliance.
@@ -59,8 +65,8 @@ export default function EditApplianceModal({
 
   if (!appliance) return null;
 
-  // Every board now exposes all 16 GPIO slots.
-  const slotChoices = RELAY_SLOTS;
+  // Sorted by GPIO pin number ascending so users can find pins easily.
+  const slotChoices = SLOTS_BY_GPIO;
 
   // Build diff vs original — only send changed fields so backend doesn't
   // see no-op writes (keeps audit trail clean and avoids needless reconciles).
