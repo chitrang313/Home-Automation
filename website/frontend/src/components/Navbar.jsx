@@ -36,7 +36,7 @@ export default function Navbar() {
 
   return (
     <>
-      <header className="sticky top-0 z-30 bg-paper/85 backdrop-blur border-b border-slate2">
+      <header className="sticky top-0 z-30 bg-white/55 backdrop-blur-xl border-b border-white/40 shadow-sm">
         <div className="max-w-6xl mx-auto px-3 sm:px-5 py-2 sm:py-3 flex items-center justify-between gap-2">
           {/* Left: hamburger (mobile only, when logged in) + logo */}
           <div className="flex items-center gap-2 min-w-0">
@@ -136,7 +136,7 @@ export default function Navbar() {
             aria-modal="true"
             aria-label="Navigation menu"
             className={
-              'sm:hidden fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-white shadow-xl ' +
+              'sm:hidden fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-white/80 backdrop-blur-2xl shadow-2xl ' +
               'flex flex-col transform transition-transform duration-200 ease-out ' +
               (menuOpen ? 'translate-x-0' : '-translate-x-full')
             }

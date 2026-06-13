@@ -4,14 +4,14 @@ import { useAuth } from '../contexts/AuthContext';
 export default function Welcome() {
   const { firebaseUser, isAdmin } = useAuth();
   return (
-    <main className="max-w-3xl mx-auto px-4 sm:px-5 py-12 sm:py-20 text-center">
-      <div className="inline-block px-3 py-1 rounded-full bg-slate1 text-xs text-ink/60 mb-5 sm:mb-6">
+    <main className="max-w-3xl mx-auto px-4 sm:px-5 py-12 sm:py-24 text-center">
+      <div className="inline-block px-3 py-1 rounded-full glass text-xs text-ink/70 mb-5 sm:mb-6">
         ESP32 · Firebase · Real-time
       </div>
-      <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight leading-tight">
+      <h1 className="on-bg text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight leading-tight">
         Control your home, room by room.
       </h1>
-      <p className="mt-4 sm:mt-5 text-ink/60 leading-relaxed max-w-xl mx-auto text-sm sm:text-base">
+      <p className="on-bg-muted mt-4 sm:mt-5 leading-relaxed max-w-xl mx-auto text-sm sm:text-base">
         A clean, fast dashboard for every house — lights, fans, AC, and more.
         Each household has its own login. Admins manage everything from one place.
       </p>

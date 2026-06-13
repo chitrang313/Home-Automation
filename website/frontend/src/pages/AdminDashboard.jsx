@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
 import BoardCard from '../components/BoardCard';
+import Modal from '../components/Modal';
 import SearchFilter from '../components/SearchFilter';
 import ApplianceCard from '../components/ApplianceCard';
 import EditApplianceModal from '../components/EditApplianceModal';
@@ -28,12 +29,12 @@ export default function AdminDashboard() {
   const [tab, setTab] = useState('houses');
   return (
     <main className="max-w-6xl mx-auto px-4 sm:px-5 py-6 sm:py-10">
-      <h1 className="text-2xl font-bold tracking-tight mb-1">Admin Panel</h1>
-      <p className="text-ink/60 text-sm mb-5 sm:mb-6">
+      <h1 className="on-bg text-2xl font-bold tracking-tight mb-1">Admin Panel</h1>
+      <p className="on-bg-muted text-sm mb-5 sm:mb-6">
         Manage houses, persons, appliances, and ESP32 firmware.
       </p>
 
-      <div className="inline-flex p-1 bg-slate1 rounded-lg mb-5 sm:mb-6">
+      <div className="inline-flex p-1 glass rounded-xl mb-5 sm:mb-6">
         {[
           ['houses',  'Houses'],
           ['persons', 'Persons'],
@@ -43,8 +44,8 @@ export default function AdminDashboard() {
             key={k}
             onClick={() => setTab(k)}
             className={
-              'px-3.5 sm:px-4 py-1.5 text-sm font-medium rounded-md transition ' +
-              (tab === k ? 'bg-white shadow-sm' : 'text-ink/60 hover:text-ink')
+              'px-3.5 sm:px-4 py-1.5 text-sm font-medium rounded-lg transition ' +
+              (tab === k ? 'bg-white/80 text-ink shadow-sm' : 'text-ink/60 hover:text-ink')
             }
           >{label}</button>
         ))}
@@ -568,15 +569,17 @@ function AddApplianceInline({ open, onClose, houseId, roomId, onAdded }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//   PERSONS TAB — list + editor (kept mostly compatible with previous UI)
+//   PERSONS TAB
 // ═══════════════════════════════════════════════════════════════════════════
 
 function PersonsTab() {
-  const [persons, setPersons] = useState([]);
-  const [houses, setHouses] = useState([]);
+  const [persons, setPersons]     = useState([]);
+  const [houses, setHouses]       = useState([]);
   const [selectedId, setSelectedId] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState('');
+  const [loading, setLoading]     = useState(true);
+  const [err, setErr]             = useState('');
+  const [search, setSearch]       = useState('');
+  const [adding, setAdding]       = useState(false);
 
   const load = async () => {
     setErr('');
@@ -589,20 +592,24 @@ function PersonsTab() {
   };
   useEffect(() => { load(); }, []);
 
-  const onAddPerson = async () => {
-    const name = prompt('Name'); if (!name) return;
-    const email = prompt('Email'); if (!email) return;
-    const contact = prompt('Contact (with country code, e.g. +91…)'); if (!contact) return;
-    const password = prompt('Initial password (min 6 chars)'); if (!password) return;
-    try { await api.createPerson({ name, email, contact, password }); await load(); }
-    catch (e) { alert(e.message); }
-  };
   const onDeletePerson = async (id) => {
-    if (!confirm('Delete person, their auth account, and unlink from all houses?')) return;
-    await api.deletePerson(id);
-    if (selectedId === id) setSelectedId(null);
-    load();
+    if (!confirm('Delete this person, their auth account, and unlink from all houses?')) return;
+    try {
+      await api.deletePerson(id);
+      if (selectedId === id) setSelectedId(null);
+      load();
+    } catch (e) { alert(e.message); }
   };
+
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? persons.filter((p) =>
+        p.name?.toLowerCase().includes(q) ||
+        p.email?.toLowerCase().includes(q) ||
+        p.contact?.toLowerCase().includes(q)
+      )
+    : persons;
+
   const selected = persons.find((p) => p.id === selectedId);
   if (loading) return <Center>Loading…</Center>;
 
@@ -610,13 +617,35 @@ function PersonsTab() {
     <div>
       {err && <div className="text-sm text-danger mb-4">{err}</div>}
       <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-5 lg:gap-6">
+
+        {/* ── Person list ─────────────────────────────────────────── */}
         <section className={'card ' + (selectedId ? 'hidden lg:block' : '')}>
+          {/* Header */}
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">Persons <span className="text-ink/50 font-normal">({persons.length})</span></h2>
-            <button onClick={onAddPerson} className="btn-secondary text-xs py-1 px-2">+ Add</button>
+            <h2 className="font-semibold">
+              Persons <span className="text-ink/50 font-normal">({persons.length})</span>
+            </h2>
+            <button
+              onClick={() => setAdding((v) => !v)}
+              className="btn-secondary text-xs py-1 px-2"
+            >
+              {adding ? '✕ Cancel' : '+ Add'}
+            </button>
           </div>
+
+          {/* Search */}
+          <div className="mb-3">
+            <input
+              className="input"
+              placeholder="Search by name, email or contact…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          {/* List */}
           <ul className="divide-y divide-slate2">
-            {persons.map((p) => {
+            {filtered.map((p) => {
               const houseCount = Object.keys(p.houseIds || {}).length;
               const isSel = p.id === selectedId;
               return (
@@ -636,19 +665,29 @@ function PersonsTab() {
                       )}
                     </div>
                     <div className="text-xs text-ink/60 truncate">{p.email}</div>
-                    <div className="text-xs text-ink/50 truncate">{p.contact} · {houseCount} house{houseCount === 1 ? '' : 's'}</div>
+                    <div className="text-xs text-ink/50 truncate">
+                      {p.contact} · {houseCount} house{houseCount === 1 ? '' : 's'}
+                    </div>
                   </div>
-                  <button onClick={(e) => { e.stopPropagation(); onDeletePerson(p.id); }} className="text-xs text-danger hover:underline shrink-0">Delete</button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onDeletePerson(p.id); }}
+                    className="text-xs text-danger hover:underline shrink-0"
+                  >Delete</button>
                 </li>
               );
             })}
-            {persons.length === 0 && <li className="text-ink/50 text-sm py-3">No persons yet.</li>}
+            {filtered.length === 0 && (
+              <li className="text-ink/50 text-sm py-3">
+                {q ? 'No persons match your search.' : 'No persons yet.'}
+              </li>
+            )}
           </ul>
         </section>
 
+        {/* ── Person editor ────────────────────────────────────────── */}
         <section className={selectedId ? '' : 'hidden lg:block'}>
           {!selected ? (
-            <div className="card text-ink/50">Select a person to manage them.</div>
+            <div className="card text-ink/50">Select a person to view or edit their details.</div>
           ) : (
             <PersonEditor
               person={selected}
@@ -659,55 +698,192 @@ function PersonsTab() {
           )}
         </section>
       </div>
+
+      {/* Add person modal */}
+      <AddPersonModal
+        open={adding}
+        onClose={() => setAdding(false)}
+        onAdd={async (data) => {
+          await api.createPerson(data);
+          setAdding(false);
+          await load();
+        }}
+      />
     </div>
+  );
+}
+
+function AddPersonModal({ open, onClose, onAdd }) {
+  const [name,     setName]     = useState('');
+  const [email,    setEmail]    = useState('');
+  const [contact,  setContact]  = useState('');
+  const [password, setPassword] = useState('');
+  const [busy,     setBusy]     = useState(false);
+  const [err,      setErr]      = useState('');
+
+  // Reset fields every time the modal opens.
+  useEffect(() => {
+    if (open) { setName(''); setEmail(''); setContact(''); setPassword(''); setErr(''); }
+  }, [open]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!name.trim())          { setErr('Name is required');                      return; }
+    if (!email.trim())         { setErr('Email is required');                     return; }
+    if (contact.length !== 10) { setErr('Enter a valid 10-digit mobile number'); return; }
+    if (!password)             { setErr('Password is required (min 6 chars)');    return; }
+    setBusy(true);
+    setErr('');
+    try {
+      await onAdd({ name: name.trim(), email: email.trim(), contact, password });
+    } catch (e2) {
+      setErr(e2.message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={busy ? undefined : onClose} title="Add New Person" maxWidth="max-w-xl">
+      <form onSubmit={submit} className="space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="label">Name <span className="text-danger">*</span></label>
+            <input
+              className="input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Full name"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="label">Contact <span className="text-danger">*</span></label>
+            <input
+              className="input"
+              value={contact}
+              onChange={(e) => setContact(e.target.value.replace(/\D/g, '').slice(0, 10))}
+              inputMode="numeric"
+              placeholder="10-digit mobile number"
+              maxLength={10}
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="label">Email <span className="text-danger">*</span></label>
+            <input
+              className="input"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="user@example.com"
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="label">Password <span className="text-danger">*</span></label>
+            <input
+              className="input"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Min 6 characters"
+            />
+          </div>
+        </div>
+        {err && <div className="text-sm text-danger">{err}</div>}
+        <div className="flex gap-2 justify-end pt-1">
+          <button type="button" onClick={onClose} disabled={busy} className="btn-secondary">Cancel</button>
+          <button type="submit" disabled={busy} className="btn-primary">{busy ? 'Adding…' : 'Add Person'}</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
 function PersonEditor({ person, houses, onBack, onChange }) {
   const [edit, setEdit] = useState({ name: person.name, email: person.email, contact: person.contact });
   const [saving, setSaving] = useState(false);
-  useEffect(() => setEdit({ name: person.name, email: person.email, contact: person.contact }), [person.id]);
+  const [saveErr, setSaveErr] = useState('');
+  useEffect(() => {
+    setEdit({ name: person.name, email: person.email, contact: person.contact });
+    setSaveErr('');
+  }, [person.id]);
 
   const onSave = async () => {
+    if (!edit.name?.trim())           { setSaveErr('Name is required');                      return; }
+    if (!edit.email?.trim())          { setSaveErr('Email is required');                     return; }
+    if ((edit.contact || '').length !== 10) { setSaveErr('Enter a valid 10-digit mobile number'); return; }
+    setSaveErr('');
     setSaving(true);
     try { await api.updatePerson(person.id, edit); await onChange(); }
-    catch (e) { alert(e.message); }
+    catch (e) { setSaveErr(e.message); }
     finally { setSaving(false); }
   };
 
-  const linkedIds = Object.keys(person.houseIds || {});
+  const linkedIds      = Object.keys(person.houseIds || {});
   const linkedHouses   = houses.filter((h) => linkedIds.includes(h.id));
   const unlinkedHouses = houses.filter((h) => !linkedIds.includes(h.id));
 
   return (
     <div className="space-y-5">
       <button onClick={onBack} className="lg:hidden text-sm text-ink/60 hover:text-ink">← Back</button>
+
+      {/* ── Details card ──────────────────────────────────────────── */}
       <div className="card">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold">Person details</h3>
-          <button onClick={onSave} disabled={saving} className="btn-primary">{saving ? 'Saving…' : 'Save'}</button>
+          <button onClick={onSave} disabled={saving} className="btn-primary">
+            {saving ? 'Saving…' : 'Save'}
+          </button>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div><label className="label">Name</label><input className="input" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></div>
-          <div><label className="label">Contact</label><input className="input" value={edit.contact} onChange={(e) => setEdit({ ...edit, contact: e.target.value })} /></div>
-          <div className="sm:col-span-2"><label className="label">Email</label><input className="input" type="email" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></div>
+          <div>
+            <label className="label">Name <span className="text-danger">*</span></label>
+            <input className="input" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
+          </div>
+          <div>
+            <label className="label">Contact <span className="text-danger">*</span></label>
+            <input
+              className="input"
+              value={edit.contact}
+              onChange={(e) => setEdit({ ...edit, contact: e.target.value.replace(/\D/g, '').slice(0, 10) })}
+              inputMode="numeric"
+              placeholder="10-digit mobile number"
+              maxLength={10}
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="label">Email <span className="text-danger">*</span></label>
+            <input className="input" type="email" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} />
+          </div>
         </div>
+        {saveErr && <div className="mt-2 text-sm text-danger">{saveErr}</div>}
       </div>
+
+      {/* ── House access card ─────────────────────────────────────── */}
       <div className="card">
         <h3 className="font-semibold mb-3">Houses this person can access</h3>
-        {linkedHouses.length === 0 ? (
-          <div className="text-ink/50 text-sm mb-3">Not linked to any house.</div>
-        ) : (
-          <ul className="divide-y divide-slate2 mb-3">
+
+        {/* Warning — no house linked */}
+        {linkedHouses.length === 0 && (
+          <div className="flex items-start gap-2.5 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2.5 mb-4">
+            <span className="shrink-0 text-base">⚠️</span>
+            <p className="text-sm text-danger/80 leading-snug">
+              This person is not linked to any house. They won&apos;t be able to control any appliances until at least one house is assigned below.
+            </p>
+          </div>
+        )}
+
+        {/* Linked houses list */}
+        {linkedHouses.length > 0 && (
+          <ul className="divide-y divide-slate2 mb-4">
             {linkedHouses.map((h) => (
-              <li key={h.id} className="py-2 flex items-center justify-between">
+              <li key={h.id} className="py-2.5 flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-sm font-medium truncate">{h.name}</div>
-                  <div className="text-xs text-ink/60 truncate">{h.location || '—'}</div>
+                  <div className="text-xs text-ink/55 truncate">{h.location || '—'}</div>
                 </div>
                 <button
                   onClick={async () => {
-                    if (!confirm(`Remove ${person.name} from ${h.name}?`)) return;
+                    if (!confirm(`Remove ${person.name} from "${h.name}"?`)) return;
                     await api.unlinkPersonFromHouse(h.id, person.id);
                     onChange();
                   }}
@@ -717,6 +893,8 @@ function PersonEditor({ person, houses, onBack, onChange }) {
             ))}
           </ul>
         )}
+
+        {/* Link a new house */}
         <HouseLinker person={person} unlinked={unlinkedHouses} onChange={onChange} />
       </div>
     </div>
@@ -729,10 +907,19 @@ function HouseLinker({ person, unlinked, onChange }) {
     <div className="flex flex-col sm:flex-row gap-2">
       <select className="input flex-1" value={hid} onChange={(e) => setHid(e.target.value)}>
         <option value="">— link this person to a house —</option>
-        {unlinked.map((h) => <option key={h.id} value={h.id}>{h.name}{h.location ? ` (${h.location})` : ''}</option>)}
+        {unlinked.map((h) => (
+          <option key={h.id} value={h.id}>
+            {h.name}{h.location ? ` (${h.location})` : ''}
+          </option>
+        ))}
       </select>
       <button
-        onClick={async () => { if (!hid) return; await api.linkPersonToHouse(hid, person.id); setHid(''); onChange(); }}
+        onClick={async () => {
+          if (!hid) return;
+          await api.linkPersonToHouse(hid, person.id);
+          setHid('');
+          onChange();
+        }}
         disabled={!hid}
         className="btn-primary"
       >Link</button>
@@ -827,7 +1014,7 @@ function FindBody({ houseIds }) {
           )}
         </button>
       </div>
-      {loading && <div className="text-ink/60 text-sm">Loading…</div>}
+      {loading && <div className="on-bg-muted text-sm">Loading…</div>}
       {filtered.length === 0 ? (
         <div className="card text-center py-10 text-ink/50">No appliances match the current filter.</div>
       ) : (
@@ -863,5 +1050,5 @@ function FindBody({ houseIds }) {
 }
 
 function Center({ children }) {
-  return <div className="min-h-[40vh] flex items-center justify-center text-ink/60">{children}</div>;
+  return <div className="min-h-[40vh] flex items-center justify-center on-bg-muted">{children}</div>;
 }

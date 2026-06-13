@@ -4,12 +4,53 @@
 
 html, body, #root { height: 100%; }
 
+/*
+ * ── Ambient background ───────────────────────────────────────────────────
+ * A modern-home photo sits behind everything via a FIXED ::before layer
+ * (not background-attachment:fixed, which janks on iOS Safari).
+ *
+ * Over the photo we stack a richer treatment than a flat black wash:
+ *   • two soft colour glows (cool indigo top-left, warm violet bottom-right)
+ *   • a radial vignette that darkens the edges for focus
+ *   • a gentle vertical tint for overall contrast
+ * The result reads as deep "ambient room lighting" — premium, never flat,
+ * and dark enough that white text + frosted glass are always legible.
+ */
 body {
-  @apply bg-paper text-ink font-sans antialiased;
-  /* Respect notches / home indicators on phones */
+  @apply text-ink font-sans antialiased;
+  background-color: #0a0c14; /* fallback while the photo loads / if blocked */
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
   -webkit-text-size-adjust: 100%; /* iOS: stop landscape font scaling */
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background-image:
+    radial-gradient(120% 95% at 16% -5%,  rgba(70, 96, 168, 0.45) 0%, transparent 48%),
+    radial-gradient(110% 85% at 102% 104%, rgba(126, 72, 150, 0.42) 0%, transparent 52%),
+    radial-gradient(95%  80% at 50% 45%,   rgba(10, 12, 20, 0.05) 0%, rgba(7, 9, 16, 0.78) 100%),
+    linear-gradient(180deg, rgba(7, 9, 16, 0.82) 0%, rgba(10, 12, 22, 0.55) 38%, rgba(10, 12, 22, 0.60) 66%, rgba(6, 8, 14, 0.90) 100%),
+    url('https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1920&q=80');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* A very slow drift on a second glow layer keeps the backdrop subtly alive. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: -20%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 38% at 30% 30%, rgba(80, 120, 200, 0.16) 0%, transparent 70%),
+    radial-gradient(34% 34% at 72% 68%, rgba(150, 90, 180, 0.14) 0%, transparent 70%);
+  animation: ambientDrift 26s ease-in-out infinite alternate;
 }
 
 /* Hide scrollbar on horizontal tab lists but keep scrolling */
@@ -20,33 +61,148 @@ body {
 @layer components {
   /* Buttons — minimum 44px tall for thumb-friendly touch targets */
   .btn {
-    @apply inline-flex items-center justify-center font-medium rounded-lg
-           px-4 py-2.5 min-h-[44px] transition-colors duration-150
-           select-none active:scale-[0.98];
+    @apply inline-flex items-center justify-center font-medium rounded-xl
+           px-4 py-2.5 min-h-[44px] transition-all duration-200
+           select-none active:scale-[0.97];
   }
-  .btn-primary   { @apply btn bg-ink text-paper hover:bg-ink/90 disabled:opacity-50; }
-  .btn-secondary { @apply btn bg-slate1 text-ink hover:bg-slate2 border border-slate3; }
-  .btn-danger    { @apply btn bg-danger text-white hover:bg-danger/90; }
+  .btn-primary {
+    @apply btn bg-ink text-paper hover:bg-ink/90 disabled:opacity-50;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.25);
+  }
+  .btn-primary:hover { box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42), 0 3px 8px rgba(0, 0, 0, 0.3); }
+  .btn-danger { @apply btn bg-danger text-white hover:bg-danger/90; box-shadow: 0 8px 24px rgba(239, 68, 68, 0.35); }
+
+  /* Secondary button — frosted glass so it sits naturally on glass panels */
+  .btn-secondary {
+    @apply btn text-ink disabled:opacity-50;
+    background: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.65);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
+  }
+  .btn-secondary:hover { background: rgba(255, 255, 255, 0.78); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); }
 
   /* Compact action button used inside lists / cards */
   .btn-sm {
-    @apply inline-flex items-center justify-center font-medium rounded-md
-           px-3 py-1.5 min-h-[36px] text-xs transition-colors duration-150;
+    @apply inline-flex items-center justify-center font-medium rounded-lg
+           px-3 py-1.5 min-h-[36px] text-xs transition-all duration-150 active:scale-[0.97];
   }
 
   /* Inputs — 16px font size prevents iOS Safari zoom-on-focus */
   .input {
-    @apply w-full px-3 py-2.5 rounded-lg bg-white border border-slate3
-           text-base text-ink placeholder:text-ink/40
-           focus:outline-none focus:border-ink/40 focus:ring-2 focus:ring-ink/5
-           transition;
+    @apply w-full px-3 py-2.5 rounded-xl text-base text-ink
+           placeholder:text-ink/45 transition focus:outline-none;
+    background: rgba(255, 255, 255, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.65);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
   }
-  .label { @apply block text-sm font-medium text-ink/70 mb-1; }
+  .input:focus {
+    border-color: rgba(59, 130, 246, 0.55);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+    background: rgba(255, 255, 255, 0.92);
+  }
+  .label { @apply block text-sm font-medium text-ink/75 mb-1; }
 
-  /* Card — less padding on tightest screens, more on roomy ones */
+  /*
+   * Card — frosted "liquid glass" surface. Higher opacity + saturation keeps
+   * dark text crisp in any lighting, while the soft blurred shadow makes it
+   * float above the ambient backdrop.
+   */
   .card {
-    @apply bg-white rounded-xl border border-slate2 shadow-card p-4 sm:p-5;
+    @apply rounded-2xl p-4 sm:p-5;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(22px) saturate(150%);
+    -webkit-backdrop-filter: blur(22px) saturate(150%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.7),
+      0 12px 40px rgba(0, 0, 0, 0.3),
+      0 4px 12px rgba(0, 0, 0, 0.18);
   }
+
+  /* Generic frosted panel helper (same look as .card without padding) */
+  .glass {
+    background: rgba(255, 255, 255, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  }
+
+  /* Text rendered directly on the dark ambient background (not on a card) */
+  .on-bg       { color: #ffffff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.4); }
+  .on-bg-muted { color: rgba(255, 255, 255, 0.85); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); }
+}
+
+/*
+ * ── Liquid glass (layered, with SVG refraction) ──────────────────────────
+ * Used by Modal. Four stacked layers: refractive backdrop, white tint,
+ * specular shine, then content on top. The SVG #glass-distortion filter
+ * (injected once in App.jsx) bends the backdrop for the "liquid" look; if a
+ * browser ignores it the blur + tint still read as solid frosted glass.
+ */
+.lg-wrap {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+.lg-effect {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  backdrop-filter: blur(10px) saturate(150%);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  filter: url(#glass-distortion);
+}
+.lg-tint {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: rgba(255, 255, 255, 0.68); /* opaque enough that text never washes out */
+}
+.lg-shine {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow:
+    inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.75),
+    inset -1px -1px 1px rgba(255, 255, 255, 0.6);
+}
+.lg-content { position: relative; z-index: 3; }
+
+/* ── Animations ──────────────────────────────────────────────────────────── */
+@keyframes fadeIn   { from { opacity: 0; } to { opacity: 1; } }
+@keyframes riseIn   { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes modalIn  { from { opacity: 0; transform: translateY(18px) scale(0.97); } to { opacity: 1; transform: none; } }
+@keyframes ambientDrift {
+  from { transform: translate3d(-2%, -1%, 0) scale(1); }
+  to   { transform: translate3d(2%, 1%, 0) scale(1.05); }
+}
+
+.animate-fade  { animation: fadeIn 0.35s ease both; }
+.animate-rise  { animation: riseIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-modal { animation: modalIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* Gentle entrance for every page / route change */
+main { animation: riseIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* Soft lift used on interactive cards */
+.hover-lift { transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.22s ease; }
+.hover-lift:hover { transform: translateY(-3px); }
+
+/* Honour users who prefer less motion / lower GPU load */
+@media (prefers-reduced-motion: reduce) {
+  .lg-effect { filter: none; }
+  .animate-fade, .animate-rise, .animate-modal,
+  main, body::after { animation: none; }
+  .hover-lift:hover { transform: none; }
 }
 
 /* Cleaner tap highlights on Android */
